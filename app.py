@@ -117,15 +117,83 @@ with st.sidebar:
     
     st.divider()
     st.header("Detection Settings")
-    ndwi_threshold = st.slider(
-        "NDWI Water Threshold", 
-        min_value=-0.3, 
-        max_value=0.3, 
-        value=0.0, 
-        step=0.05,
-        help="Lower values detect more water (useful for shallow/turbid water near shore). Higher values are more conservative."
+    
+    # Algorithm selection
+    detection_method = st.selectbox(
+        "Detection Method",
+        ["NDWI + Fixed Threshold", "NDWI + Otsu (Auto)", "NDWI + Adaptive", "Multi-Index Consensus"],
+        help="""
+        **Fixed:** Fast, manual tuning, works in most conditions
+        **Otsu:** Auto-threshold per scene, better for variable turbidity
+        **Adaptive:** Local thresholding, best for complex mixed scenes
+        **Multi-Index:** Uses NDWI+MNDWI+AWEI consensus (slower, most robust for challenging conditions)
+        """
     )
-    st.caption("💡 **Tip:** If shorelines look identical, try lowering the threshold to -0.1 or -0.15 to detect subtle coastal changes.")
+    
+    # Show threshold slider only for fixed method
+    if detection_method == "NDWI + Fixed Threshold":
+        ndwi_threshold = st.slider(
+            "NDWI Water Threshold", 
+            min_value=-0.3, 
+            max_value=0.3, 
+            value=0.0, 
+            step=0.05,
+            help="Lower values detect more water (useful for shallow/turbid water near shore). Higher values are more conservative."
+        )
+    else:
+        ndwi_threshold = 0.0  # Default, not used for other methods
+    
+    # Consensus votes slider for multi-index method
+    if detection_method == "Multi-Index Consensus":
+        consensus_votes = st.slider(
+            "Consensus Threshold",
+            min_value=1,
+            max_value=3,
+            value=2,
+            help="Number of indices (NDWI, MNDWI, AWEI) that must agree a pixel is water. Higher = more conservative."
+        )
+    else:
+        consensus_votes = 2  # Default value for other methods
+    
+    # Post-processing options
+    st.subheader("Post-processing")
+    apply_morphology = st.checkbox(
+        "Refine water mask (morphology)",
+        value=True,
+        help="Remove noise and fill small gaps using mathematical morphology"
+    )
+    
+    if apply_morphology:
+        morph_kernel_size = st.slider(
+            "Refinement strength",
+            min_value=2,
+            max_value=7,
+            value=3,
+            step=1,
+            help="Larger values = more aggressive smoothing (removes more noise but may lose detail)"
+        )
+    else:
+        morph_kernel_size = 3
+    
+    smooth_shoreline = st.checkbox(
+        "Smooth shoreline vectors",
+        value=True,
+        help="Simplify shoreline using Douglas-Peucker algorithm for cleaner results"
+    )
+    
+    if smooth_shoreline:
+        smooth_tolerance = st.slider(
+            "Smoothing tolerance (meters)",
+            min_value=0.0,
+            max_value=10.0,
+            value=2.0,
+            step=0.5,
+            help="Larger values = smoother lines (but may lose small features)"
+        )
+    else:
+        smooth_tolerance = 0.0
+    
+    st.caption("💡 **Tip:** Start with default settings. If results are noisy, increase refinement strength.")
     st.caption("📏 **Resolution:** Sentinel-2 has 10m pixel resolution. Changes smaller than ~20-30m may not be reliably detected.")
     
     st.divider()
@@ -446,12 +514,25 @@ def rgb_to_base64_png(rgb_array: np.ndarray) -> str:
     return f"data:image/png;base64,{b64}"
 
 def compute_ndwi(green: np.ndarray, nir: np.ndarray) -> np.ndarray:
+    """Compute Normalized Difference Water Index."""
     denom = green + nir
     denom[denom == 0] = np.nan
     ndwi = (green - nir) / denom
     # Clip to sane range
     ndwi = np.clip(ndwi, -1.0, 1.0)
     return ndwi
+
+def compute_mndwi(green: np.ndarray, swir: np.ndarray) -> np.ndarray:
+    """Compute Modified Normalized Difference Water Index (better for turbid/coastal water)."""
+    denom = green + swir
+    denom[denom == 0] = np.nan
+    mndwi = (green - swir) / denom
+    return np.clip(mndwi, -1.0, 1.0)
+
+def compute_awei(green: np.ndarray, nir: np.ndarray, swir1: np.ndarray, swir2: np.ndarray) -> np.ndarray:
+    """Compute Automated Water Extraction Index (suppresses non-water pixels)."""
+    awei = 4 * (green - swir1) - (0.25 * nir + 2.75 * swir2)
+    return awei
 
 def mask_clouds_with_scl(scl: np.ndarray) -> np.ndarray:
     """
@@ -476,12 +557,105 @@ def mask_clouds_with_scl(scl: np.ndarray) -> np.ndarray:
     good = ~bad_dilated
     return good
 
-def ndwi_to_watermask(ndwi: np.ndarray, thresh: float = 0.0) -> np.ndarray:
-    # Simple fixed threshold. Later you can add Otsu or adaptive per-scene.
-    return (ndwi >= thresh).astype(np.uint8)
+def ndwi_to_watermask(ndwi: np.ndarray, thresh: float = 0.0, method: str = "fixed") -> np.ndarray:
+    """
+    Convert NDWI to binary water mask using different methods.
+    
+    Args:
+        ndwi: NDWI array (may contain NaN for clouds/invalid pixels)
+        thresh: Threshold value (used for 'fixed' method)
+        method: 'fixed', 'otsu', or 'adaptive'
+    """
+    if method == "otsu":
+        # Otsu auto-thresholding
+        from skimage.filters import threshold_otsu
+        valid_ndwi = ndwi[~np.isnan(ndwi)]
+        if len(valid_ndwi) < 100:
+            # Fallback to fixed if insufficient data
+            mask = (ndwi >= thresh).astype(np.uint8)
+            return mask
+        try:
+            otsu_thresh = threshold_otsu(valid_ndwi)
+            mask = (ndwi >= otsu_thresh).astype(np.uint8)
+            return mask
+        except:
+            mask = (ndwi >= thresh).astype(np.uint8)
+            return mask
+    elif method == "adaptive":
+        # Adaptive local thresholding (for complex scenes)
+        from skimage.filters import threshold_local
+        # Replace NaN with low value for processing
+        ndwi_filled = np.nan_to_num(ndwi, nan=-1.0)
+        try:
+            local_thresh = threshold_local(ndwi_filled, block_size=35, method='gaussian')
+            mask = (ndwi_filled > local_thresh).astype(np.uint8)
+            # But exclude the filled NaN areas from final mask
+            mask[np.isnan(ndwi)] = 0
+            return mask
+        except:
+            mask = (ndwi >= thresh).astype(np.uint8)
+            return mask
+    else:  # fixed threshold
+        mask = (ndwi >= thresh).astype(np.uint8)
+        return mask
 
-def vectorize_mask(mask: np.ndarray, transform) -> List[Polygon]:
-    """Raster (0/1) -> polygons (value=1)."""
+def refine_water_mask(mask: np.ndarray, kernel_size: int = 3) -> np.ndarray:
+    """
+    Clean water mask using morphological operations.
+    Opening removes small noise, closing fills small gaps.
+    """
+    from scipy.ndimage import binary_opening, binary_closing
+    kernel = np.ones((kernel_size, kernel_size), dtype=bool)
+    # Opening removes small isolated pixels
+    mask_clean = binary_opening(mask.astype(bool), structure=kernel)
+    # Closing fills small holes
+    mask_clean = binary_closing(mask_clean, structure=kernel)
+    return mask_clean.astype(np.uint8)
+
+def multi_index_water_detection(b02: np.ndarray, b03: np.ndarray, b08: np.ndarray, 
+                                b11: np.ndarray, b12: np.ndarray, 
+                                consensus_threshold: int = 2) -> np.ndarray:
+    """
+    Combine multiple water indices for robust detection.
+    Returns water mask where at least `consensus_threshold` indices agree.
+    
+    Args:
+        b02: Blue band (10m)
+        b03: Green band (10m)
+        b08: NIR band (10m)
+        b11: SWIR1 band (20m, will be resampled)
+        b12: SWIR2 band (20m, will be resampled)
+        consensus_threshold: Number of indices that must agree (1-3)
+    """
+    # NDWI
+    ndwi = compute_ndwi(b03, b08)
+    water_ndwi = (ndwi > 0.0).astype(int)
+    
+    # MNDWI (better for turbid water)
+    mndwi = compute_mndwi(b03, b11)
+    water_mndwi = (mndwi > 0.0).astype(int)
+    
+    # AWEI (suppresses non-water pixels)
+    awei = compute_awei(b03, b08, b11, b12)
+    water_awei = (awei > 0.0).astype(int)
+    
+    # Consensus voting
+    vote_count = water_ndwi + water_mndwi + water_awei
+    consensus = (vote_count >= consensus_threshold).astype(np.uint8)
+    
+    return consensus
+
+def vectorize_mask(mask: np.ndarray, transform, bbox: Dict = None) -> List[Polygon]:
+    """
+    Convert raster mask to vector polygons.
+    Filters out only the largest boundary-extending polygon (ocean).
+    Keeps all islands regardless of boundary touching.
+    
+    Args:
+        mask: Binary raster mask (0/1)
+        transform: Rasterio affine transform
+        bbox: Bounding box dict with min_lon, max_lon, min_lat, max_lat (optional)
+    """
     polys = []
     for geom, val in shapes(mask, mask=None, transform=transform):
         if val != 1:
@@ -496,20 +670,74 @@ def vectorize_mask(mask: np.ndarray, transform) -> List[Polygon]:
     merged = unary_union(polys)
     if isinstance(merged, (Polygon, MultiPolygon)):
         geoms = [merged] if isinstance(merged, Polygon) else list(merged.geoms)
-        # Remove tiny artifacts
-        geoms = [p for p in geoms if p.area > 1e-8]
+        # Filter very small noise polygons
+        min_area = 1e-7  # Very small threshold - only filter obvious noise
+        geoms = [p for p in geoms if p.area > min_area]
+        
+        # Smart boundary filtering: 
+        # - Keep the LARGEST polygon (main ocean) even if it touches edges
+        # - Keep ALL other polygons (islands) regardless of boundary
+        if bbox and len(geoms) > 1:
+            # Create a boundary box slightly inset
+            buffer = 1e-6  # Tiny buffer in degrees
+            boundary_box = box(
+                bbox['min_lon'] + buffer,
+                bbox['min_lat'] + buffer,
+                bbox['max_lon'] - buffer,
+                bbox['max_lat'] - buffer
+            )
+            
+            # Sort by area (largest first)
+            geoms_sorted = sorted(geoms, key=lambda g: g.area, reverse=True)
+            
+            # Strategy: Keep largest polygon + all fully-contained polygons + medium-sized edge polygons
+            filtered_geoms = []
+            
+            # Always keep the largest polygon (main water body/ocean)
+            filtered_geoms.append(geoms_sorted[0])
+            
+            # For other polygons, use smart filtering
+            for g in geoms_sorted[1:]:
+                # Check if polygon is fully contained (island completely inside bbox)
+                if boundary_box.contains(g):
+                    # Fully contained island - definitely keep it
+                    filtered_geoms.append(g)
+                elif g.intersects(boundary_box):
+                    # Touches boundary - could be real island or edge artifact
+                    # Keep if it's not too small (real islands have meaningful size)
+                    # Use relative size: if > 1% of largest polygon, likely real
+                    if g.area > geoms_sorted[0].area * 0.01:
+                        filtered_geoms.append(g)
+                    # OR if it's moderately sized in absolute terms
+                    elif g.area > 1e-6:  # ~0.01 km² at mid-latitudes
+                        filtered_geoms.append(g)
+            
+            return filtered_geoms
+        
         return geoms
     return []
 
-def shoreline_from_polys(polys: List[Polygon]) -> List[LineString]:
-    """Extract exterior boundaries as shoreline lines."""
+def shoreline_from_polys(polys: List[Polygon], smooth_tolerance: float = 0.0) -> List[LineString]:
+    """
+    Extract exterior boundaries as shoreline lines.
+    
+    Args:
+        polys: List of water polygons
+        smooth_tolerance: Douglas-Peucker smoothing tolerance (0 = no smoothing)
+    """
     lines = []
     for p in polys:
-        lines.append(LineString(p.exterior.coords))
+        line = LineString(p.exterior.coords)
+        if smooth_tolerance > 0:
+            line = line.simplify(smooth_tolerance, preserve_topology=True)
+        lines.append(line)
     return lines
 
 def run_once(bbox: Dict, start_date: date, end_date: date, max_cc: int, use_mpc=True,
-             ndwi_thresh: float = 0.0, external_cloud_mask: np.ndarray = None) -> Dict:
+             ndwi_thresh: float = 0.0, external_cloud_mask: np.ndarray = None,
+             detection_method: str = "NDWI + Fixed Threshold",
+             apply_morphology: bool = True, morph_kernel_size: int = 3,
+             smooth_tolerance: float = 2.0, consensus_votes: int = 2) -> Dict:
     """
     Execute one run: find best scenes to cover bbox, compute NDWI water mask + shoreline.
     Returns dict with {item_id, cc, shoreline_geojson, water_poly_geojson, cloud_mask}.
@@ -576,11 +804,59 @@ def run_once(bbox: Dict, start_date: date, end_date: date, max_cc: int, use_mpc=
     if good_mask is not None:
         ndwi = np.where(good_mask, ndwi, np.nan)
 
-    water_mask = ndwi_to_watermask(np.nan_to_num(ndwi, nan=-1.0), thresh=ndwi_thresh)
+    # Water detection based on selected method
+    if detection_method == "Multi-Index Consensus":
+        # Need SWIR bands (B11, B12) and Blue (B02) for multi-index
+        try:
+            b02_arr, _, _ = mosaic_bands(best_items, "B02", bbox, use_mpc=use_mpc)  # Blue 10m
+            b11_arr, _, _ = mosaic_bands(best_items, "B11", bbox, use_mpc=use_mpc)  # SWIR1 20m
+            b12_arr, _, _ = mosaic_bands(best_items, "B12", bbox, use_mpc=use_mpc)  # SWIR2 20m
+            
+            # Resize SWIR to match Green/NIR shape if needed
+            if b11_arr.shape != g_arr.shape:
+                from scipy.ndimage import zoom
+                zoom_factors = (g_arr.shape[0] / b11_arr.shape[0], g_arr.shape[1] / b11_arr.shape[1])
+                b11_arr = zoom(b11_arr, zoom_factors, order=1)
+                b12_arr = zoom(b12_arr, zoom_factors, order=1)
+            
+            # Apply cloud mask to all bands before multi-index detection
+            if good_mask is not None:
+                b02_arr = np.where(good_mask, b02_arr, np.nan)
+                g_arr_masked = np.where(good_mask, g_arr, np.nan)
+                n_arr_masked = np.where(good_mask, n_arr, np.nan)
+                b11_arr = np.where(good_mask, b11_arr, np.nan)
+                b12_arr = np.where(good_mask, b12_arr, np.nan)
+            else:
+                g_arr_masked = g_arr
+                n_arr_masked = n_arr
+            
+            water_mask = multi_index_water_detection(b02_arr, g_arr_masked, n_arr_masked, b11_arr, b12_arr, consensus_votes)
+        except Exception as e:
+            st.warning(f"Could not use multi-index method (missing bands?): {e}. Falling back to NDWI.")
+            # Keep NaN as NaN - don't classify cloudy pixels as water
+            water_mask = ndwi_to_watermask(ndwi, thresh=ndwi_thresh, method="fixed")
+            # Set cloudy pixels to 0 (not water) in mask
+            water_mask[np.isnan(ndwi)] = 0
+    else:
+        # Map method names to internal codes
+        method_map = {
+            "NDWI + Fixed Threshold": "fixed",
+            "NDWI + Otsu (Auto)": "otsu",
+            "NDWI + Adaptive": "adaptive"
+        }
+        method_code = method_map.get(detection_method, "fixed")
+        # Keep NaN as NaN for thresholding, but exclude from final mask
+        water_mask = ndwi_to_watermask(ndwi, thresh=ndwi_thresh, method=method_code)
+        # Set cloudy/invalid pixels to 0 (not water) in mask
+        water_mask[np.isnan(ndwi)] = 0
+    
+    # Apply morphological refinement if requested
+    if apply_morphology:
+        water_mask = refine_water_mask(water_mask, kernel_size=morph_kernel_size)
 
-    # Vectorize
-    polys = vectorize_mask(water_mask, g_transform)
-    shores = shoreline_from_polys(polys)
+    # Vectorize (pass bbox to filter edge-touching polygons)
+    polys = vectorize_mask(water_mask, g_transform, bbox=bbox)
+    shores = shoreline_from_polys(polys, smooth_tolerance=smooth_tolerance)
 
     # Build GeoJSON outputs
     poly_fc = {"type": "FeatureCollection", "features": [
@@ -607,7 +883,10 @@ def run_once(bbox: Dict, start_date: date, end_date: date, max_cc: int, use_mpc=
         "cloud_mask": good_mask,  # Return the cloud mask for potential reuse
     }
 
-def run_change(bbox: Dict, start_date: date, end_date: date, back_days: int, max_cc: int, use_mpc=True, ndwi_thresh: float = 0.0) -> Dict:
+def run_change(bbox: Dict, start_date: date, end_date: date, back_days: int, max_cc: int, use_mpc=True,
+               ndwi_thresh: float = 0.0, detection_method: str = "NDWI + Fixed Threshold",
+               apply_morphology: bool = True, morph_kernel_size: int = 3,
+               smooth_tolerance: float = 2.0, consensus_votes: int = 2) -> Dict:
     """
     Compute water masks for current window and an earlier window, return change polygons.
     
@@ -619,14 +898,20 @@ def run_change(bbox: Dict, start_date: date, end_date: date, back_days: int, max
     # First pass: get cloud masks from both periods
     with st.expander("📋 Processing Details", expanded=False):
         st.write("🔍 First pass: detecting clouds in both periods...")
-    now_run_initial = run_once(bbox, start_date, end_date, max_cc, use_mpc=use_mpc, ndwi_thresh=ndwi_thresh)
+    now_run_initial = run_once(bbox, start_date, end_date, max_cc, use_mpc=use_mpc, 
+                               ndwi_thresh=ndwi_thresh, detection_method=detection_method,
+                               apply_morphology=apply_morphology, morph_kernel_size=morph_kernel_size,
+                               smooth_tolerance=smooth_tolerance, consensus_votes=consensus_votes)
     
     # Calculate historical window: same duration as current window, offset back in time
     window_duration = (end_date - start_date).days
     earlier_start = start_date - timedelta(days=back_days)
     earlier_end = earlier_start + timedelta(days=window_duration)
     
-    then_run_initial = run_once(bbox, earlier_start, earlier_end, max_cc, use_mpc=use_mpc, ndwi_thresh=ndwi_thresh)
+    then_run_initial = run_once(bbox, earlier_start, earlier_end, max_cc, use_mpc=use_mpc, 
+                                ndwi_thresh=ndwi_thresh, detection_method=detection_method,
+                                apply_morphology=apply_morphology, morph_kernel_size=morph_kernel_size,
+                                smooth_tolerance=smooth_tolerance, consensus_votes=consensus_votes)
     
     # Combine cloud masks: a pixel is good only if good in BOTH periods
     now_mask = now_run_initial.get("cloud_mask")
@@ -649,8 +934,16 @@ def run_change(bbox: Dict, start_date: date, end_date: date, back_days: int, max
     if combined_mask is not None:
         with st.expander("📋 Processing Details", expanded=False):
             st.write("🔄 Second pass: re-analyzing with combined cloud mask...")
-        now_run = run_once(bbox, start_date, end_date, max_cc, use_mpc=use_mpc, ndwi_thresh=ndwi_thresh, external_cloud_mask=combined_mask)
-        then_run = run_once(bbox, earlier_start, earlier_end, max_cc, use_mpc=use_mpc, ndwi_thresh=ndwi_thresh, external_cloud_mask=combined_mask)
+        now_run = run_once(bbox, start_date, end_date, max_cc, use_mpc=use_mpc, 
+                          ndwi_thresh=ndwi_thresh, external_cloud_mask=combined_mask,
+                          detection_method=detection_method, apply_morphology=apply_morphology,
+                          morph_kernel_size=morph_kernel_size, smooth_tolerance=smooth_tolerance,
+                          consensus_votes=consensus_votes)
+        then_run = run_once(bbox, earlier_start, earlier_end, max_cc, use_mpc=use_mpc, 
+                           ndwi_thresh=ndwi_thresh, external_cloud_mask=combined_mask,
+                           detection_method=detection_method, apply_morphology=apply_morphology,
+                           morph_kernel_size=morph_kernel_size, smooth_tolerance=smooth_tolerance,
+                           consensus_votes=consensus_votes)
     else:
         # Use initial results if no combined mask
         now_run = now_run_initial
@@ -756,7 +1049,10 @@ if run_now:
     if bbox:
         with st.status("🔄 Processing Sentinel-2 data...", expanded=False) as status:
             try:
-                res = run_once(bbox, start, end, cloud, use_mpc=use_mpc, ndwi_thresh=ndwi_threshold)
+                res = run_once(bbox, start, end, cloud, use_mpc=use_mpc, 
+                              ndwi_thresh=ndwi_threshold, detection_method=detection_method,
+                              apply_morphology=apply_morphology, morph_kernel_size=morph_kernel_size,
+                              smooth_tolerance=smooth_tolerance, consensus_votes=consensus_votes)
                 st.session_state.result = {"mode": "single", "data": res}
                 status.update(label="✅ Analysis complete!", state="complete")
             except Exception as e:
@@ -771,7 +1067,10 @@ if run_cmp:
         if bbox:
             with st.status("🔄 Processing change detection...", expanded=False) as status:
                 try:
-                    res = run_change(bbox, start, end, back_days, cloud, use_mpc=use_mpc, ndwi_thresh=ndwi_threshold)
+                    res = run_change(bbox, start, end, back_days, cloud, use_mpc=use_mpc, 
+                                   ndwi_thresh=ndwi_threshold, detection_method=detection_method,
+                                   apply_morphology=apply_morphology, morph_kernel_size=morph_kernel_size,
+                                   smooth_tolerance=smooth_tolerance, consensus_votes=consensus_votes)
                     st.session_state.result = {"mode": "compare", "data": res}
                     status.update(label="✅ Change detection complete!", state="complete")
                 except Exception as e:
@@ -875,19 +1174,30 @@ if st.session_state.result:
         st.info("ℹ️ **What you're seeing:** Water detection and shoreline for the selected time period. "
                 "To see **coastline changes over time**, enable 'Compare with earlier window' in the sidebar and run the comparison analysis.")
         
-        st.write(f"**Scene:** `{data['item_id']}`")
-        st.write(f"**Cloud cover:** {data['cloud_cover']:.1f}%")
+        # Display detection method and parameters
+        col1, col2 = st.columns(2)
+        with col1:
+            st.write(f"**Detection Method:** {detection_method}")
+            st.write(f"**Scene:** `{data['item_id']}`")
+        with col2:
+            st.write(f"**Cloud cover:** {data['cloud_cover']:.1f}%")
+            # Count features
+            water_count = len(data["water"].get("features", []))
+            shore_count = len(data["shoreline"].get("features", []))
+            st.write(f"**Detected:** {water_count} water polygon(s), {shore_count} shoreline segment(s)")
         
-        # Count features
-        water_count = len(data["water"].get("features", []))
-        shore_count = len(data["shoreline"].get("features", []))
-        st.write(f"**Detected:** {water_count} water polygon(s), {shore_count} shoreline segment(s)")
+        # Calculate total water area
+        water_area_deg2 = sum(shape(f["geometry"]).area for f in data["water"].get("features", []))
+        lat_avg = (st.session_state.bounds['_southWest']['lat'] + st.session_state.bounds['_northEast']['lat']) / 2 if st.session_state.bounds else 30
+        deg_to_km2 = (111.32 * np.cos(np.radians(lat_avg)) * 111.32)
+        water_area_km2 = water_area_deg2 * deg_to_km2
+        st.metric("💧 Total Water Area", f"{water_area_km2:.2f} km²")
         
         st.markdown("""
         **Legend:**
         - 🛰️ **Satellite image** = Actual Sentinel-2 RGB composite (what the satellite sees)
         - 🔵 **Blue lines** = Detected shoreline (water/land boundary)
-        - � **Light blue areas** = Water mask (detected water bodies)
+        - 💧 **Light blue areas** = Water mask (detected water bodies)
         
         *Tip: Use the layer control (top right) to toggle layers on/off*
         """)
@@ -912,8 +1222,15 @@ if st.session_state.result:
         
         st.success("✅ **You're now viewing coastline changes!**")
         
-        st.write(f"**Current period scene(s):** `{now['item_id']}` (cloud {now['cloud_cover']:.1f}%)")
-        st.write(f"**Earlier period scene(s):** `{then['item_id']}` (cloud {then['cloud_cover']:.1f}%)")
+        # Display detection method and parameters
+        st.write(f"**Detection Method:** {detection_method}")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.write(f"**Current period scene(s):** `{now['item_id']}`")
+            st.write(f"Cloud cover: {now['cloud_cover']:.1f}%")
+        with col2:
+            st.write(f"**Earlier period scene(s):** `{then['item_id']}`")
+            st.write(f"Cloud cover: {then['cloud_cover']:.1f}%")
         
         st.markdown("""
         ### How to Interpret the Results:
