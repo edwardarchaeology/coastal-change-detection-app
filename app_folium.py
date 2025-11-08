@@ -470,8 +470,13 @@ def server(input, output, session):
                 aoi_bounds.set(bounds)
                 area = (bounds['max_lon'] - bounds['min_lon']) * (bounds['max_lat'] - bounds['min_lat'])
                 print(f"✓ Bounding box auto-set from drawing: {bounds} (area: {area:.6f} deg²)", file=sys.stderr)
+                
+                # Show success notification
+                ui.notification_show(f"✅ Area selected: {area:.6f}° × {area:.6f}°", 
+                                   type="message", duration=2)
         except Exception as e:
             print(f"Error auto-setting bbox: {e}", file=sys.stderr)
+            ui.notification_show(f"⚠️ Error setting area: {str(e)}", type="warning", duration=3)
     
     @reactive.Effect
     @reactive.event(input.btn_geocode)
@@ -502,8 +507,11 @@ def server(input, output, session):
         """Main analysis execution"""
         # Validate inputs
         if not aoi_bounds.get():
-            ui.notification_show("⚠️ Please click twice on the map to select your area of interest", 
-                               type="warning", duration=5)
+            ui.notification_show(
+                "⚠️ Please define your area of interest:\n" +
+                "• Draw a rectangle on the map, OR\n" +
+                "• Enter coordinates and click 'Set Bounding Box'", 
+                type="warning", duration=7)
             return
         
         bounds = aoi_bounds.get()
