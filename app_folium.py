@@ -314,6 +314,27 @@ def server(input, output, session):
         # Get HTML
         map_html = m._repr_html_()
         
+        # Add custom CSS to hide the export popup/modal
+        custom_css = """
+        <style>
+        /* Hide Leaflet Draw export modal/popup */
+        .leaflet-draw-actions-bottom,
+        .leaflet-draw-toolbar-button-export,
+        .leaflet-draw-section:has(.leaflet-draw-edit-export),
+        [data-action="export"],
+        button[title*="xport"],
+        .leaflet-popup-pane .leaflet-popup:has(pre) {
+            display: none !important;
+        }
+        
+        /* Also hide any alert/modal dialogs that might be GeoJSON popups */
+        div[role="dialog"]:has(pre),
+        div.modal:has(pre) {
+            display: none !important;
+        }
+        </style>
+        """
+        
         # Add custom JavaScript to capture draw events and update Shiny inputs
         custom_js = """
         <script>
@@ -393,10 +414,46 @@ def server(input, output, session):
             checkInterval = setInterval(setupDrawListener, 100);
             setupDrawListener(); // Try immediately
         })();
+        
+        // Additional script to prevent and close any GeoJSON export popups
+        (function() {
+            // Override alert to prevent GeoJSON popups
+            const originalAlert = window.alert;
+            window.alert = function(msg) {
+                // Only block alerts that look like GeoJSON (contain "type":"Feature" or coordinates)
+                if (msg && (msg.includes('"type":"Feature"') || msg.includes('"coordinates"'))) {
+                    console.log('Blocked GeoJSON export popup');
+                    return;
+                }
+                originalAlert.apply(window, arguments);
+            };
+            
+            // Listen for iframes and do the same inside them
+            document.addEventListener('DOMContentLoaded', function() {
+                const iframes = document.querySelectorAll('iframe');
+                iframes.forEach(function(iframe) {
+                    try {
+                        const iframeWindow = iframe.contentWindow;
+                        if (iframeWindow) {
+                            const originalIframeAlert = iframeWindow.alert;
+                            iframeWindow.alert = function(msg) {
+                                if (msg && (msg.includes('"type":"Feature"') || msg.includes('"coordinates"'))) {
+                                    console.log('Blocked GeoJSON export popup in iframe');
+                                    return;
+                                }
+                                originalIframeAlert.apply(iframeWindow, arguments);
+                            };
+                        }
+                    } catch (e) {
+                        // Cross-origin, ignore
+                    }
+                });
+            });
+        })();
         </script>
         """
         
-        return ui.HTML(f'<div style="height: 650px; width: 100%;">{map_html}{custom_js}</div>')
+        return ui.HTML(f'<div style="height: 650px; width: 100%;">{custom_css}{map_html}{custom_js}</div>')
     
     @output
     @render.text
