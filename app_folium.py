@@ -35,34 +35,59 @@ app_ui = ui.page_navbar(
             ui.nav_panel("🗺️ Map",
                 # Map section
                 ui.row(
-                    ui.column(9,
+                    ui.column(7,
                         ui.output_ui("map_ui"),
                     ),
-                    ui.column(3,
+                    ui.column(5,
                         ui.card(
                             ui.card_header("🗺️ Map Controls"),
-                            ui.input_select("basemap", "Basemap Style",
-                                          choices={
-                                              "satellite": "🛰️ Satellite Imagery",
-                                              "grayscale": "⚪ Grayscale (High Contrast)"
-                                          },
-                                          selected="satellite"),
-                            ui.hr(),
-                            ui.h6("Define Area of Interest"),
                             ui.div(
-                                ui.p("📍 Option 1: Draw on map", class_="small fw-bold mb-1"),
-                                ui.p("Use the rectangle tool (◻️) in top-left of map, then click 'Set Bounding Box' below", 
-                                     class_="small text-muted mb-2"),
-                                ui.p("📝 Option 2: Enter coordinates", class_="small fw-bold mb-1"),
-                                ui.p("Manually enter lat/lon values below:", class_="small text-muted mb-2"),
+                                ui.input_select("basemap", "Basemap Style",
+                                              choices={
+                                                  "satellite": "🛰️ Satellite Imagery",
+                                                  "grayscale": "⚪ Grayscale (High Contrast)"
+                                              },
+                                              selected="satellite"),
+                                ui.hr(),
+                                ui.h6("Define Area of Interest"),
+                                
+                                # Set Bounding Box button at the top
+                                ui.input_action_button("btn_set_bbox", "✓ Set Bounding Box", class_="btn-success w-100 mb-3 btn-lg fw-bold"),
+                                ui.p("👆 CLICK THIS after drawing rectangle or entering coordinates", class_="small text-success text-center mb-3 fw-bold"),
+                                
+                                ui.div(
+                                    ui.div(
+                                        ui.p("⚠️ After drawing a rectangle on the map:", class_="small fw-bold text-warning mb-1"),
+                                        ui.p("Click the 'Set Bounding Box' button above to confirm your selection", 
+                                             class_="small text-warning mb-2"),
+                                        class_="alert alert-warning py-2 px-2 mb-2"
+                                    ),
+                                    ui.p("📍 Option 1: Draw on map", class_="small fw-bold mb-1"),
+                                    ui.p("Use the rectangle tool (◻️) in top-left of map, draw your area, then click 'Set Bounding Box' above", 
+                                         class_="small text-muted mb-2"),
+                                    ui.p("📝 Option 2: Enter coordinates manually", class_="small fw-bold mb-1"),
+                                    ui.p("Expand 'Manual Coordinate Entry' below to enter lat/lon values", 
+                                         class_="small text-muted mb-2"),
+                                ),
+                                
+                                # Collapsible manual coordinate entry
+                                ui.accordion(
+                                    ui.accordion_panel(
+                                        "📝 Manual Coordinate Entry",
+                                        ui.p("Enter lat/lon values:", class_="small text-muted mb-2"),
+                                        ui.input_numeric("min_lat", "Min Latitude (South)", value=29.25, step=0.001),
+                                        ui.input_numeric("max_lat", "Max Latitude (North)", value=29.27, step=0.001),
+                                        ui.input_numeric("min_lon", "Min Longitude (West)", value=-90.15, step=0.001),
+                                        ui.input_numeric("max_lon", "Max Longitude (East)", value=-90.12, step=0.001),
+                                    ),
+                                    id="coord_accordion",
+                                    open=False,
+                                    class_="mb-3"
+                                ),
+                                
+                                ui.input_action_button("btn_clear_bbox", "Clear Bounding Box", class_="btn-secondary w-100 btn-sm"),
+                                style="height: 400px; overflow-y: auto;"
                             ),
-                            ui.input_numeric("min_lat", "Min Latitude (South)", value=29.25, step=0.001),
-                            ui.input_numeric("max_lat", "Max Latitude (North)", value=29.27, step=0.001),
-                            ui.input_numeric("min_lon", "Min Longitude (West)", value=-90.15, step=0.001),
-                            ui.input_numeric("max_lon", "Max Longitude (East)", value=-90.12, step=0.001),
-                            ui.input_action_button("btn_set_bbox", "✓ Set Bounding Box", class_="btn-success w-100 mt-2"),
-                            ui.p("👆 Click after drawing or entering coordinates", class_="small text-muted text-center mt-1 mb-0"),
-                            ui.input_action_button("btn_clear_bbox", "Clear", class_="btn-secondary w-100 mt-1 btn-sm"),
                         ),
                     ),
                 ),
@@ -122,7 +147,7 @@ app_ui = ui.page_navbar(
                         ),
                         
                         ui.card(
-                            ui.card_header("� Analysis Mode"),
+                            ui.card_header("⚙️ Analysis Mode"),
                             ui.input_select("provider", "Data Provider",
                                           choices={"mpc": "Microsoft Planetary", "e84": "Element84"},
                                           selected="mpc"),
@@ -161,11 +186,11 @@ app_ui = ui.page_navbar(
                 
                 ### 1. Select Your Area
                 
-                **🎨 DRAW METHOD (Recommended - Easiest!):**
+                **🎨 DRAW METHOD:**
                 1. Click the **rectangle tool** (⬜) in the top-left corner of the map
                 2. Click and drag on the map to draw your area
-                3. **Coordinates auto-fill** and yellow box appears instantly!
-                4. Ready to analyze!
+                3. ⚠️ **IMPORTANT**: Click the green **"✓ Set Bounding Box"** button to confirm
+                4. Yellow box appears - now you're ready to analyze!
                 
                 **⌨️ MANUAL METHOD:**
                 1. Enter a location in the **Search box** (e.g., "Grand Isle, Louisiana")
@@ -453,7 +478,7 @@ def server(input, output, session):
         </script>
         """
         
-        return ui.HTML(f'<div style="height: 650px; width: 100%;">{custom_css}{map_html}{custom_js}</div>')
+        return ui.HTML(f'<div style="height: 400px; width: 100%;">{custom_css}{map_html}{custom_js}</div>')
     
     @output
     @render.text
