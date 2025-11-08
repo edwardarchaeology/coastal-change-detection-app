@@ -49,13 +49,19 @@ app_ui = ui.page_navbar(
                                           selected="satellite"),
                             ui.hr(),
                             ui.h6("Define Area of Interest"),
-                            ui.p("Draw rectangle on map OR enter coordinates below:",
-                                 class_="small text-muted"),
+                            ui.div(
+                                ui.p("📍 Option 1: Draw on map", class_="small fw-bold mb-1"),
+                                ui.p("Use the rectangle tool (◻️) in top-left of map, then click 'Set Bounding Box' below", 
+                                     class_="small text-muted mb-2"),
+                                ui.p("📝 Option 2: Enter coordinates", class_="small fw-bold mb-1"),
+                                ui.p("Manually enter lat/lon values below:", class_="small text-muted mb-2"),
+                            ),
                             ui.input_numeric("min_lat", "Min Latitude (South)", value=29.25, step=0.001),
                             ui.input_numeric("max_lat", "Max Latitude (North)", value=29.27, step=0.001),
                             ui.input_numeric("min_lon", "Min Longitude (West)", value=-90.15, step=0.001),
                             ui.input_numeric("max_lon", "Max Longitude (East)", value=-90.12, step=0.001),
                             ui.input_action_button("btn_set_bbox", "✓ Set Bounding Box", class_="btn-success w-100 mt-2"),
+                            ui.p("👆 Click after drawing or entering coordinates", class_="small text-muted text-center mt-1 mb-0"),
                             ui.input_action_button("btn_clear_bbox", "Clear", class_="btn-secondary w-100 mt-1 btn-sm"),
                         ),
                     ),
@@ -438,6 +444,11 @@ def server(input, output, session):
                 return
             
             aoi_bounds.set(bounds)
+            
+            # Calculate and show area
+            area_deg = (bounds['max_lon'] - bounds['min_lon']) * (bounds['max_lat'] - bounds['min_lat'])
+            ui.notification_show(f"✅ Area of interest set! ({area_deg:.6f}° area)", 
+                               type="message", duration=3)
             print(f"Bounding box set from coordinates: {bounds}", file=sys.stderr)
         except Exception as e:
             ui.notification_show(f"Error: {str(e)}", type="error", duration=3)
