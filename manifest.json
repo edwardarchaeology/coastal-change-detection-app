@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "locale": "en_US.UTF-8",
+  "metadata": {
+    "appmode": "python-shiny",
+    "entrypoint": "app_folium.py"
+  },
+  "python": {
+    "version": "3.12.0",
+    "package_manager": {
+      "name": "pip",
+      "version": "23.0.0",
+      "package_file": "requirements.txt"
+    }
+  },
+  "files": {
+    "app_folium.py": {
+      "checksum": ""
+    },
+    "coastal_processor.py": {
+      "checksum": ""
+    },
+    "requirements.txt": {
+      "checksum": ""
+    }
+  }
+}

@@ -1,0 +1,20 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.env
+.venv
+venv/
+.env.*
+.git/
+*.sqlite3
+*.log
+.dockerignore
+Dockerfile
+*.egg-info/
+
+# local config
+.vscode/
+.idea/
+
