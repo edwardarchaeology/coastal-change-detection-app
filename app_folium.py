@@ -1,4 +1,4 @@
-# Coastal Change Monitor — Shiny for Python (Folium Version)
+﻿# Coastal Change Monitor — Shiny for Python (Folium Version)
 # Using Folium for more reliable map rendering
 
 from shiny import App, ui, render, reactive, req
@@ -52,38 +52,48 @@ app_ui = ui.page_navbar(
                                 ui.h6("Define Area of Interest"),
                                 
                                 ui.div(
-                                    ui.p("📍 Draw on the map:", class_="small fw-bold mb-1"),
-                                    ui.p("Use the rectangle tool (◻️) in top-left of map to draw your area. Coordinates will auto-populate below.", 
-                                         class_="small text-muted mb-2"),
-                                    ui.p("📝 Or enter coordinates manually:", class_="small fw-bold mb-1"),
-                                    ui.p("Expand 'Manual Coordinate Entry' below to enter lat/lon values directly", 
-                                         class_="small text-muted mb-2"),
+                                    ui.p("📍 Draw a rectangle on the map:", class_="small fw-bold mb-1"),
+                                    ui.p("Use the rectangle tool (◻️) in the top-left of the map to draw your area, then click the button below to confirm.", 
+                                         class_="small text-muted mb-3"),
                                 ),
                                 
-                                # Hidden input to receive drawn coordinates
-                                ui.input_text("drawn_coords", "", placeholder="hidden"),
-                                ui.tags.style("#drawn_coords { display: none; }"),
+                                # Button to set bounding box from drawn rectangle
+                                ui.input_action_button("btn_set_drawn_bbox", "✓ Set Bounding Box from Drawing", 
+                                                      class_="btn-success w-100 mb-3"),
                                 
-                                # Collapsible manual coordinate entry
+                                # Show drawn coordinates (for debugging)
+                                ui.output_ui("drawn_coords_display"),
+                                
+                                # Hidden inputs to receive drawn coordinates
+                                ui.input_numeric("drawn_min_lat", "", value=None),
+                                ui.input_numeric("drawn_max_lat", "", value=None),
+                                ui.input_numeric("drawn_min_lon", "", value=None),
+                                ui.input_numeric("drawn_max_lon", "", value=None),
+                                ui.tags.style("#drawn_min_lat, #drawn_max_lat, #drawn_min_lon, #drawn_max_lon { display: none; }"),
+                                
+                                # Status display
+                                ui.div(
+                                    ui.output_text("aoi_status"),
+                                    class_="alert alert-info py-2 px-3 mb-3 small"
+                                ),
+                                
+                                # Collapsible manual coordinate entry (for advanced users)
                                 ui.accordion(
                                     ui.accordion_panel(
-                                        "📝 Manual Coordinate Entry (Optional)",
-                                        ui.p("These will auto-fill when you draw a rectangle, or you can enter them manually:", class_="small text-muted mb-2"),
+                                        "▸ Advanced: Manual Coordinate Entry",
+                                        ui.p("For precise control, enter exact lat/lon bounds:", class_="small text-muted mb-2"),
                                         ui.input_numeric("min_lat", "Min Latitude (South)", value=None, step=0.001),
                                         ui.input_numeric("max_lat", "Max Latitude (North)", value=None, step=0.001),
                                         ui.input_numeric("min_lon", "Min Longitude (West)", value=None, step=0.001),
                                         ui.input_numeric("max_lon", "Max Longitude (East)", value=None, step=0.001),
                                         ui.tags.small("Example: Grand Isle, LA is approximately 29.25 to 29.27 (lat), -90.15 to -90.12 (lon)", 
                                                      class_="text-muted d-block mt-2"),
+                                        ui.input_action_button("btn_set_bbox", "Set from Manual Coordinates", class_="btn-primary w-100 mt-2"),
                                     ),
                                     id="coord_accordion",
                                     open=False,
                                     class_="mb-3"
                                 ),
-                                
-                                # Set Bounding Box button
-                                ui.input_action_button("btn_set_bbox", "✓ Set Bounding Box", class_="btn-success w-100 mb-2 btn-lg fw-bold"),
-                                ui.p("👆 Draw a rectangle or enter coordinates, then click this", class_="small text-success text-center mb-3 fw-bold"),
                                 
                                 ui.input_action_button("btn_clear_bbox", "Clear Bounding Box", class_="btn-secondary w-100 btn-sm"),
                                 style="height: 400px; overflow-y: auto;"
@@ -164,10 +174,6 @@ app_ui = ui.page_navbar(
                             
                             ui.hr(),
                             ui.input_action_button("btn_run", "▶️  RUN ANALYSIS", class_="btn-success btn-lg w-100"),
-                            ui.div(
-                                ui.output_text("aoi_status"),
-                                style="margin-top: 10px; padding: 5px; text-align: center; font-size: 0.9em;"
-                            ),
                         ),
                         
                         col_widths=[3, 3, 3, 3]
@@ -370,7 +376,7 @@ def server(input, output, session):
         </style>
         """
         
-        # Add custom JavaScript to capture draw events and update Shiny inputs
+        # Single JavaScript to capture draw events from iframe and update Shiny inputs
         custom_js = """
         <script>
         (function() {
@@ -405,28 +411,31 @@ def server(input, output, session):
                                             const bounds = layer.getBounds();
                                             
                                             const coords = {
-                                                min_lat: bounds.getSouth().toFixed(6),
-                                                max_lat: bounds.getNorth().toFixed(6),
-                                                min_lon: bounds.getWest().toFixed(6),
-                                                max_lon: bounds.getEast().toFixed(6)
+                                                min_lat: bounds.getSouth(),
+                                                max_lat: bounds.getNorth(),
+                                                min_lon: bounds.getWest(),
+                                                max_lon: bounds.getEast()
                                             };
                                             
-                                            console.log('Rectangle drawn:', coords);
+                                            console.log('[DRAW] Rectangle drawn:', coords);
                                             
-                                            // Update Shiny inputs
+                                            // Update Shiny hidden inputs for drawn coordinates
                                             if (window.Shiny) {
-                                                Shiny.setInputValue('min_lat', parseFloat(coords.min_lat));
-                                                Shiny.setInputValue('max_lat', parseFloat(coords.max_lat));
-                                                Shiny.setInputValue('min_lon', parseFloat(coords.min_lon));
-                                                Shiny.setInputValue('max_lon', parseFloat(coords.max_lon));
-                                                Shiny.setInputValue('auto_set_bbox', Date.now(), {priority: 'event'});
+                                                console.log('[DRAW] Updating Shiny inputs...');
+                                                Shiny.setInputValue('drawn_min_lat', coords.min_lat);
+                                                Shiny.setInputValue('drawn_max_lat', coords.max_lat);
+                                                Shiny.setInputValue('drawn_min_lon', coords.min_lon);
+                                                Shiny.setInputValue('drawn_max_lon', coords.max_lon);
+                                                console.log('[DRAW] ✓ Coordinates captured and sent to Shiny!');
+                                            } else {
+                                                console.warn('[DRAW] Shiny not available!');
                                             }
                                             
-                                            // Remove the drawn layer
-                                            map.removeLayer(layer);
+                                            // Keep the drawn layer visible (don't remove it)
+                                            // User can use the delete tool if they want to remove it
                                         });
                                         
-                                        console.log('Successfully attached draw listener to Folium map');
+                                        console.log('[DRAW] ✓ Successfully attached draw listener to Folium map');
                                         clearInterval(checkInterval);
                                         return;
                                     }
@@ -435,13 +444,14 @@ def server(input, output, session):
                         }
                     } catch (e) {
                         // Cross-origin or access error, continue
+                        console.log('[DRAW] Access error (expected for cross-origin):', e.message);
                     }
                 }
                 
                 // Stop after max attempts
                 if (checkCount >= maxChecks) {
                     clearInterval(checkInterval);
-                    console.warn('Could not attach draw listener to map');
+                    console.warn('[DRAW] Could not attach draw listener to map after ' + maxChecks + ' attempts');
                 }
             }
             
@@ -450,128 +460,21 @@ def server(input, output, session):
             setupDrawListener(); // Try immediately
         })();
         
-        // Additional script to prevent and close any GeoJSON export popups
+        // Override alert to prevent GeoJSON export popups
         (function() {
-            // Override alert to prevent GeoJSON popups
             const originalAlert = window.alert;
             window.alert = function(msg) {
-                // Only block alerts that look like GeoJSON (contain "type":"Feature" or coordinates)
                 if (msg && (msg.includes('"type":"Feature"') || msg.includes('"coordinates"'))) {
-                    console.log('Blocked GeoJSON export popup');
+                    console.log('[DRAW] Blocked GeoJSON export popup');
                     return;
                 }
                 originalAlert.apply(window, arguments);
             };
-            
-            // Listen for iframes and do the same inside them
-            document.addEventListener('DOMContentLoaded', function() {
-                const iframes = document.querySelectorAll('iframe');
-                iframes.forEach(function(iframe) {
-                    try {
-                        const iframeWindow = iframe.contentWindow;
-                        if (iframeWindow) {
-                            const originalIframeAlert = iframeWindow.alert;
-                            iframeWindow.alert = function(msg) {
-                                if (msg && (msg.includes('"type":"Feature"') || msg.includes('"coordinates"'))) {
-                                    console.log('Blocked GeoJSON export popup in iframe');
-                                    return;
-                                }
-                                originalIframeAlert.apply(iframeWindow, arguments);
-                            };
-                        }
-                    } catch (e) {
-                        // Cross-origin, ignore
-                    }
-                });
-            });
         })();
         </script>
         """
         
-        # Inject JavaScript directly into the map HTML that will run INSIDE the iframe
-        # This avoids cross-origin issues since it's in the same context as the map
-        iframe_js = """
-        <script>
-        (function() {
-            // Wait for map to be ready
-            function setupDrawHandler() {
-                // Find the Leaflet map instance
-                var mapElement = document.querySelector('.folium-map');
-                if (!mapElement || !mapElement._leaflet_id) {
-                    setTimeout(setupDrawHandler, 100);
-                    return;
-                }
-                
-                // Get the map from the global window object
-                for (var key in window) {
-                    var obj = window[key];
-                    if (obj && obj._container === mapElement) {
-                        var map = obj;
-                        
-                        // Attach draw:created event
-                        map.on('draw:created', function(e) {
-                            var layer = e.layer;
-                            var bounds = layer.getBounds();
-                            
-                            var coords = {
-                                min_lat: bounds.getSouth(),
-                                max_lat: bounds.getNorth(),
-                                min_lon: bounds.getWest(),
-                                max_lon: bounds.getEast()
-                            };
-                            
-                            console.log('Rectangle drawn:', coords);
-                            
-                            // Send to parent window using postMessage (works cross-origin)
-                            window.parent.postMessage({
-                                type: 'DRAWN_BBOX',
-                                coords: coords
-                            }, '*');
-                            
-                            // Remove the drawn layer
-                            map.removeLayer(layer);
-                        });
-                        
-                        console.log('Draw handler attached inside iframe');
-                        break;
-                    }
-                }
-            }
-            
-            // Start setup
-            if (document.readyState === 'loading') {
-                document.addEventListener('DOMContentLoaded', setupDrawHandler);
-            } else {
-                setupDrawHandler();
-            }
-        })();
-        </script>
-        """
-        
-        # Add the iframe JavaScript to the map HTML before </body>
-        map_html = map_html.replace('</body>', iframe_js + '</body>')
-        
-        # Parent window JavaScript to receive postMessage and update Shiny inputs
-        parent_js = """
-        <script>
-        (function() {
-            // Listen for messages from iframe
-            window.addEventListener('message', function(event) {
-                if (event.data && event.data.type === 'DRAWN_BBOX') {
-                    var coords = event.data.coords;
-                    console.log('Received drawn bbox from iframe:', coords);
-                    
-                    // Update Shiny inputs
-                    if (window.Shiny) {
-                        Shiny.setInputValue('drawn_coords', JSON.stringify(coords), {priority: 'event'});
-                    }
-                }
-            });
-        })();
-        </script>
-        """
-        
-        return ui.HTML(f'<div style="height: 400px; width: 100%;">{custom_css}{map_html}{parent_js}</div>')
+        return ui.HTML(f'<div style="height: 400px; width: 100%;">{custom_css}{map_html}{custom_js}</div>')
     
     @output
     @render.text
@@ -595,8 +498,30 @@ def server(input, output, session):
         bounds = aoi_bounds.get()
         if bounds:
             area_deg = (bounds['max_lon'] - bounds['min_lon']) * (bounds['max_lat'] - bounds['min_lat'])
-            return f"✓ AOI selected (~{area_deg:.4f} deg²)"
-        return "⚠️ Enter coordinates and click 'Set Bounding Box'"
+            lat_range = f"{bounds['min_lat']:.4f}° to {bounds['max_lat']:.4f}°"
+            lon_range = f"{bounds['min_lon']:.4f}° to {bounds['max_lon']:.4f}°"
+            return f"✅ Area Selected!\nSize: ~{area_deg:.6f}° area\nLat: {lat_range}\nLon: {lon_range}"
+        return "⚠️ No area selected yet. Draw a rectangle on the map to select your area of interest."
+    
+    @output
+    @render.ui
+    def drawn_coords_display():
+        """Display captured coordinates from drawing"""
+        min_lat = input.drawn_min_lat()
+        max_lat = input.drawn_max_lat()
+        min_lon = input.drawn_min_lon()
+        max_lon = input.drawn_max_lon()
+        
+        if all(coord is not None for coord in [min_lat, max_lat, min_lon, max_lon]):
+            return ui.div(
+                ui.tags.small(
+                    f"📐 Rectangle captured: {min_lat:.4f}° to {max_lat:.4f}° (lat), {min_lon:.4f}° to {max_lon:.4f}° (lon)",
+                    class_="text-success d-block text-center mb-2"
+                )
+            )
+        return ui.div(
+            ui.tags.small("(Draw a rectangle to see coordinates here)", class_="text-muted d-block text-center mb-2")
+        )
     
     @reactive.Effect
     @reactive.event(input.btn_set_bbox)
@@ -667,39 +592,52 @@ def server(input, output, session):
         print("Bounding box cleared", file=sys.stderr)
     
     @reactive.Effect
-    @reactive.event(input.drawn_coords)
-    def handle_drawn_coords():
-        """Handle coordinates received from drawing on the map via postMessage"""
+    @reactive.event(input.btn_set_drawn_bbox)
+    def set_drawn_bbox():
+        """Confirm and set bounding box from drawn coordinates"""
+        # Get coordinates from hidden inputs (populated by drawing)
+        min_lat = input.drawn_min_lat()
+        max_lat = input.drawn_max_lat()
+        min_lon = input.drawn_min_lon()
+        max_lon = input.drawn_max_lon()
+        
+        # Check if coordinates were actually drawn
+        if any(coord is None for coord in [min_lat, max_lat, min_lon, max_lon]):
+            ui.notification_show(
+                "⚠️ No rectangle detected! Please draw a rectangle on the map first using the rectangle tool (◻️).", 
+                type="warning", 
+                duration=5
+            )
+            return
+        
         try:
-            coords_json = input.drawn_coords()
-            if not coords_json:
-                return
-            
-            coords = json.loads(coords_json)
-            print(f"Received drawn coordinates: {coords}", file=sys.stderr)
-            
-            # Automatically set the bounding box
-            bounds = {
-                'min_lat': float(coords['min_lat']),
-                'max_lat': float(coords['max_lat']),
-                'min_lon': float(coords['min_lon']),
-                'max_lon': float(coords['max_lon'])
+            coords = {
+                'min_lat': float(min_lat),
+                'max_lat': float(max_lat),
+                'min_lon': float(min_lon),
+                'max_lon': float(max_lon)
             }
             
-            aoi_bounds.set(bounds)
+            aoi_bounds.set(coords)
             
-            area = (bounds['max_lon'] - bounds['min_lon']) * (bounds['max_lat'] - bounds['min_lat'])
-            print(f"✓ Bounding box auto-set from drawing: {bounds} (area: {area:.6f} deg²)", file=sys.stderr)
+            area = (coords['max_lon'] - coords['min_lon']) * (coords['max_lat'] - coords['min_lat'])
+            print(f"✓ Bounding box set from drawn rectangle: {coords} (area: {area:.6f} deg²)", file=sys.stderr)
             
             # Show success notification
             ui.notification_show(
-                f"✅ Area selected from drawing! ({area:.6f}° area)\nClick 'Run Analysis' to continue.", 
+                f"✅ Area of interest set from drawing! ({area:.6f}° area)\nReady to run analysis.", 
                 type="message", 
                 duration=4
             )
+            
+            # Clear the hidden inputs
+            ui.update_numeric("drawn_min_lat", value=None)
+            ui.update_numeric("drawn_max_lat", value=None)
+            ui.update_numeric("drawn_min_lon", value=None)
+            ui.update_numeric("drawn_max_lon", value=None)
         except Exception as e:
-            print(f"Error handling drawn coords: {e}", file=sys.stderr)
-            ui.notification_show(f"⚠️ Error processing drawn area: {str(e)}", type="warning", duration=3)
+            print(f"Error setting drawn bbox: {e}", file=sys.stderr)
+            ui.notification_show(f"⚠️ Error: {str(e)}", type="error", duration=3)
     
     @reactive.Effect
     @reactive.event(input.btn_geocode)
@@ -1313,3 +1251,4 @@ def server(input, output, session):
 
 
 app = App(app_ui, server)
+
