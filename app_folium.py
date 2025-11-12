@@ -52,22 +52,23 @@ app_ui = ui.page_navbar(
                                 ui.h6("Define Area of Interest"),
                                 
                                 ui.div(
-                                    ui.div(
-                                        ui.p("⚠️ Important for Posit Connect Cloud users:", class_="small fw-bold text-warning mb-1"),
-                                        ui.p("After drawing, you MUST manually enter the coordinates in 'Manual Coordinate Entry' below and click 'Set Bounding Box'", 
-                                             class_="small text-warning mb-2"),
-                                        class_="alert alert-warning py-2 px-2 mb-2"
-                                    ),
-                                    ui.p("📍 Drawing on the map:", class_="small fw-bold mb-1"),
-                                    ui.p("Use the rectangle tool (◻️) in top-left of map to visualize your area, then manually enter the coordinates shown", 
+                                    ui.p("📍 Draw on the map:", class_="small fw-bold mb-1"),
+                                    ui.p("Use the rectangle tool (◻️) in top-left of map to draw your area. Coordinates will auto-populate below.", 
+                                         class_="small text-muted mb-2"),
+                                    ui.p("📝 Or enter coordinates manually:", class_="small fw-bold mb-1"),
+                                    ui.p("Expand 'Manual Coordinate Entry' below to enter lat/lon values directly", 
                                          class_="small text-muted mb-2"),
                                 ),
                                 
-                                # Collapsible manual coordinate entry - NOW OPEN BY DEFAULT
+                                # Hidden input to receive drawn coordinates
+                                ui.input_text("drawn_coords", "", placeholder="hidden"),
+                                ui.tags.style("#drawn_coords { display: none; }"),
+                                
+                                # Collapsible manual coordinate entry
                                 ui.accordion(
                                     ui.accordion_panel(
-                                        "📝 Coordinate Entry (Required)",
-                                        ui.p("Enter the lat/lon bounds for your area of interest:", class_="small text-muted mb-2"),
+                                        "📝 Manual Coordinate Entry (Optional)",
+                                        ui.p("These will auto-fill when you draw a rectangle, or you can enter them manually:", class_="small text-muted mb-2"),
                                         ui.input_numeric("min_lat", "Min Latitude (South)", value=None, step=0.001),
                                         ui.input_numeric("max_lat", "Max Latitude (North)", value=None, step=0.001),
                                         ui.input_numeric("min_lon", "Min Longitude (West)", value=None, step=0.001),
@@ -76,13 +77,13 @@ app_ui = ui.page_navbar(
                                                      class_="text-muted d-block mt-2"),
                                     ),
                                     id="coord_accordion",
-                                    open=True,  # Open by default so users see the fields
+                                    open=False,
                                     class_="mb-3"
                                 ),
                                 
                                 # Set Bounding Box button
                                 ui.input_action_button("btn_set_bbox", "✓ Set Bounding Box", class_="btn-success w-100 mb-2 btn-lg fw-bold"),
-                                ui.p("👆 CLICK THIS after entering coordinates above", class_="small text-success text-center mb-3 fw-bold"),
+                                ui.p("👆 Draw a rectangle or enter coordinates, then click this", class_="small text-success text-center mb-3 fw-bold"),
                                 
                                 ui.input_action_button("btn_clear_bbox", "Clear Bounding Box", class_="btn-secondary w-100 btn-sm"),
                                 style="height: 400px; overflow-y: auto;"
@@ -487,7 +488,90 @@ def server(input, output, session):
         </script>
         """
         
-        return ui.HTML(f'<div style="height: 400px; width: 100%;">{custom_css}{map_html}{custom_js}</div>')
+        # Inject JavaScript directly into the map HTML that will run INSIDE the iframe
+        # This avoids cross-origin issues since it's in the same context as the map
+        iframe_js = """
+        <script>
+        (function() {
+            // Wait for map to be ready
+            function setupDrawHandler() {
+                // Find the Leaflet map instance
+                var mapElement = document.querySelector('.folium-map');
+                if (!mapElement || !mapElement._leaflet_id) {
+                    setTimeout(setupDrawHandler, 100);
+                    return;
+                }
+                
+                // Get the map from the global window object
+                for (var key in window) {
+                    var obj = window[key];
+                    if (obj && obj._container === mapElement) {
+                        var map = obj;
+                        
+                        // Attach draw:created event
+                        map.on('draw:created', function(e) {
+                            var layer = e.layer;
+                            var bounds = layer.getBounds();
+                            
+                            var coords = {
+                                min_lat: bounds.getSouth(),
+                                max_lat: bounds.getNorth(),
+                                min_lon: bounds.getWest(),
+                                max_lon: bounds.getEast()
+                            };
+                            
+                            console.log('Rectangle drawn:', coords);
+                            
+                            // Send to parent window using postMessage (works cross-origin)
+                            window.parent.postMessage({
+                                type: 'DRAWN_BBOX',
+                                coords: coords
+                            }, '*');
+                            
+                            // Remove the drawn layer
+                            map.removeLayer(layer);
+                        });
+                        
+                        console.log('Draw handler attached inside iframe');
+                        break;
+                    }
+                }
+            }
+            
+            // Start setup
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', setupDrawHandler);
+            } else {
+                setupDrawHandler();
+            }
+        })();
+        </script>
+        """
+        
+        # Add the iframe JavaScript to the map HTML before </body>
+        map_html = map_html.replace('</body>', iframe_js + '</body>')
+        
+        # Parent window JavaScript to receive postMessage and update Shiny inputs
+        parent_js = """
+        <script>
+        (function() {
+            // Listen for messages from iframe
+            window.addEventListener('message', function(event) {
+                if (event.data && event.data.type === 'DRAWN_BBOX') {
+                    var coords = event.data.coords;
+                    console.log('Received drawn bbox from iframe:', coords);
+                    
+                    // Update Shiny inputs
+                    if (window.Shiny) {
+                        Shiny.setInputValue('drawn_coords', JSON.stringify(coords), {priority: 'event'});
+                    }
+                }
+            });
+        })();
+        </script>
+        """
+        
+        return ui.HTML(f'<div style="height: 400px; width: 100%;">{custom_css}{map_html}{parent_js}</div>')
     
     @output
     @render.text
@@ -583,33 +667,39 @@ def server(input, output, session):
         print("Bounding box cleared", file=sys.stderr)
     
     @reactive.Effect
-    @reactive.event(input.auto_set_bbox)
-    def auto_set_bbox_from_draw():
-        """Automatically set bounding box when rectangle is drawn on map"""
+    @reactive.event(input.drawn_coords)
+    def handle_drawn_coords():
+        """Handle coordinates received from drawing on the map via postMessage"""
         try:
-            # Get the coordinates from the input fields (which were updated by JavaScript)
-            min_lat = input.min_lat()
-            max_lat = input.max_lat()
-            min_lon = input.min_lon()
-            max_lon = input.max_lon()
+            coords_json = input.drawn_coords()
+            if not coords_json:
+                return
             
-            if all(v is not None for v in [min_lat, max_lat, min_lon, max_lon]):
-                bounds = {
-                    'min_lat': float(min_lat),
-                    'max_lat': float(max_lat),
-                    'min_lon': float(min_lon),
-                    'max_lon': float(max_lon)
-                }
-                aoi_bounds.set(bounds)
-                area = (bounds['max_lon'] - bounds['min_lon']) * (bounds['max_lat'] - bounds['min_lat'])
-                print(f"✓ Bounding box auto-set from drawing: {bounds} (area: {area:.6f} deg²)", file=sys.stderr)
-                
-                # Show success notification
-                ui.notification_show(f"✅ Area selected: {area:.6f}° × {area:.6f}°", 
-                                   type="message", duration=2)
+            coords = json.loads(coords_json)
+            print(f"Received drawn coordinates: {coords}", file=sys.stderr)
+            
+            # Automatically set the bounding box
+            bounds = {
+                'min_lat': float(coords['min_lat']),
+                'max_lat': float(coords['max_lat']),
+                'min_lon': float(coords['min_lon']),
+                'max_lon': float(coords['max_lon'])
+            }
+            
+            aoi_bounds.set(bounds)
+            
+            area = (bounds['max_lon'] - bounds['min_lon']) * (bounds['max_lat'] - bounds['min_lat'])
+            print(f"✓ Bounding box auto-set from drawing: {bounds} (area: {area:.6f} deg²)", file=sys.stderr)
+            
+            # Show success notification
+            ui.notification_show(
+                f"✅ Area selected from drawing! ({area:.6f}° area)\nClick 'Run Analysis' to continue.", 
+                type="message", 
+                duration=4
+            )
         except Exception as e:
-            print(f"Error auto-setting bbox: {e}", file=sys.stderr)
-            ui.notification_show(f"⚠️ Error setting area: {str(e)}", type="warning", duration=3)
+            print(f"Error handling drawn coords: {e}", file=sys.stderr)
+            ui.notification_show(f"⚠️ Error processing drawn area: {str(e)}", type="warning", duration=3)
     
     @reactive.Effect
     @reactive.event(input.btn_geocode)
