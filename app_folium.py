@@ -285,9 +285,19 @@ def server(input, output, session):
             tiles = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
             attr = 'Esri Satellite'
         
+        # Get current bounds to determine map center
+        bounds = aoi_bounds.get()
+        if bounds:
+            # Center map on the bounding box
+            center_lat = (bounds['min_lat'] + bounds['max_lat']) / 2
+            center_lon = (bounds['min_lon'] + bounds['max_lon']) / 2
+            center_location = (center_lat, center_lon)
+        else:
+            center_location = map_center.get()
+        
         # Create map
         m = folium.Map(
-            location=map_center.get(),
+            location=center_location,
             zoom_start=DEFAULT_ZOOM,
             tiles=tiles,
             attr=attr
