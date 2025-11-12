@@ -160,7 +160,7 @@ app_ui = ui.page_navbar(
                             
                             ui.panel_conditional(
                                 "input.analysis_mode === 'change'",
-                                ui.input_slider("offset_days", "Historical offset (days)", 30, 730, 365, step=30),
+                                ui.input_slider("offset_days", "Historical offset (days)", 30, 3650, 365, step=30),
                                 ui.output_text_verbatim("date_info", placeholder=True),
                             ),
                             
