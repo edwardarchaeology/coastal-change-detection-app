@@ -125,11 +125,11 @@ app_ui = ui.page_navbar(
                             ui.input_select("method", "Algorithm",
                                           choices={
                                               "fixed": "Fixed Threshold",
-                                              "otsu": "Otsu Auto ⭐",
+                                              "otsu": "Otsu Auto (quick)",
                                               "adaptive": "Adaptive Local",
                                               "multi": "Multi-Index (best)"
                                           },
-                                          selected="otsu"),
+                                          selected="multi"),
                             
                             ui.panel_conditional(
                                 "input.method === 'fixed'",
