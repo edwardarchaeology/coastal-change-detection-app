@@ -24,7 +24,8 @@ print(f"Python version: {sys.version}", file=sys.stderr)
 print("=" * 50, file=sys.stderr)
 
 # Constants
-DEFAULT_CENTER = (29.24, -90.06)
+# Default center changed from Grand Isle, LA to Buxton, NC (Cape Hatteras)
+DEFAULT_CENTER = (35.2689, -75.5394)
 DEFAULT_ZOOM = 13
 
 app_ui = ui.page_navbar(
@@ -139,6 +140,11 @@ app_ui = ui.page_navbar(
                             ui.panel_conditional(
                                 "input.method === 'multi'",
                                 ui.input_slider("consensus", "Votes required", 1, 3, 2),
+                            ),
+                            ui.input_slider(
+                                "cloud_dilation",
+                                "Cloud-mask dilation (pixels @10 m)",
+                                min=0, max=3, value=1, step=1
                             ),
                             
                             ui.input_checkbox("refine", "Refine mask (morphology)", value=False),
@@ -693,6 +699,7 @@ def server(input, output, session):
             'ndwi_threshold': input.threshold() if input.method() == 'fixed' else 0.0,
             'consensus_votes': input.consensus() if input.method() == 'multi' else 2,
             'apply_morphology': input.refine(),
+            'cloud_dilation': input.cloud_dilation(),
             'morph_kernel': input.kernel() if input.refine() else 3,
             'smooth_tolerance': input.tolerance() if input.smooth() else 0.0,
             'offset_days': input.offset_days() if input.analysis_mode() == 'change' else 365,
