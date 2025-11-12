@@ -376,18 +376,100 @@ def server(input, output, session):
         </style>
         """
         
-        # Single JavaScript to capture draw events from iframe and update Shiny inputs
-        custom_js = """
+        # JavaScript to inject INSIDE the iframe (in the map HTML itself)
+        # This works in cloud environments where iframe access is blocked
+        iframe_js = """
         <script>
         (function() {
-            let checkInterval;
-            let checkCount = 0;
-            const maxChecks = 100;
+            console.log('[IFRAME-INJECT] Setting up draw handler inside iframe...');
             
-            function setupDrawListener() {
-                checkCount++;
+            function setupDrawHandler() {
+                // Find the Leaflet map instance
+                var mapElement = document.querySelector('.folium-map');
+                if (!mapElement || !mapElement._leaflet_id) {
+                    console.log('[IFRAME-INJECT] Map not ready, retrying...');
+                    setTimeout(setupDrawHandler, 100);
+                    return;
+                }
                 
-                // Find all iframes (Folium renders in iframe)
+                // Get the map from the global window object
+                for (var key in window) {
+                    var obj = window[key];
+                    if (obj && obj._container === mapElement) {
+                        var map = obj;
+                        console.log('[IFRAME-INJECT] Map instance found!');
+                        
+                        // Attach draw:created event
+                        map.on('draw:created', function(e) {
+                            var layer = e.layer;
+                            var bounds = layer.getBounds();
+                            
+                            var coords = {
+                                min_lat: bounds.getSouth(),
+                                max_lat: bounds.getNorth(),
+                                min_lon: bounds.getWest(),
+                                max_lon: bounds.getEast()
+                            };
+                            
+                            console.log('[IFRAME-INJECT] Rectangle drawn:', coords);
+                            
+                            // Send to parent window using postMessage
+                            window.parent.postMessage({
+                                type: 'DRAWN_BBOX',
+                                coords: coords
+                            }, '*');
+                            console.log('[IFRAME-INJECT] ✓ Sent coordinates to parent via postMessage');
+                        });
+                        
+                        console.log('[IFRAME-INJECT] ✓ Draw handler attached successfully!');
+                        return;
+                    }
+                }
+            }
+            
+            // Start setup when DOM is ready
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', setupDrawHandler);
+            } else {
+                setupDrawHandler();
+            }
+        })();
+        </script>
+        """
+        
+        # Inject the JavaScript into the map HTML (before </body>)
+        map_html = map_html.replace('</body>', iframe_js + '</body>')
+        
+        # Parent window JavaScript to receive postMessage and update Shiny inputs
+        # This also includes a fallback for local environments
+        parent_js = """
+        <script>
+        (function() {
+            console.log('[PARENT] Setting up listeners...');
+            
+            // Method 1: Listen for postMessage from iframe (works in cloud)
+            window.addEventListener('message', function(event) {
+                if (event.data && event.data.type === 'DRAWN_BBOX') {
+                    var coords = event.data.coords;
+                    console.log('[PARENT-MSG] ✓ Received coordinates via postMessage:', coords);
+                    
+                    // Update Shiny inputs
+                    if (window.Shiny) {
+                        Shiny.setInputValue('drawn_min_lat', coords.min_lat);
+                        Shiny.setInputValue('drawn_max_lat', coords.max_lat);
+                        Shiny.setInputValue('drawn_min_lon', coords.min_lon);
+                        Shiny.setInputValue('drawn_max_lon', coords.max_lon);
+                        console.log('[PARENT-MSG] ✓ Sent to Shiny!');
+                    }
+                }
+            });
+            
+            // Method 2: Try direct iframe access (fallback for local)
+            let checkCount = 0;
+            const maxChecks = 50;
+            
+            function tryDirectAccess() {
+                checkCount++;
                 const iframes = document.querySelectorAll('iframe');
                 
                 for (let iframe of iframes) {
@@ -397,67 +479,48 @@ def server(input, output, session):
                         
                         for (let mapDiv of mapDivs) {
                             if (mapDiv._leaflet_id && iframeDoc.defaultView.L) {
-                                const L = iframeDoc.defaultView.L;
-                                
-                                // Find the map instance
                                 for (let key in iframeDoc.defaultView) {
                                     const obj = iframeDoc.defaultView[key];
                                     if (obj && obj._container === mapDiv) {
                                         const map = obj;
                                         
-                                        // Attach draw:created event
                                         map.on('draw:created', function(e) {
-                                            const layer = e.layer;
-                                            const bounds = layer.getBounds();
-                                            
                                             const coords = {
-                                                min_lat: bounds.getSouth(),
-                                                max_lat: bounds.getNorth(),
-                                                min_lon: bounds.getWest(),
-                                                max_lon: bounds.getEast()
+                                                min_lat: e.layer.getBounds().getSouth(),
+                                                max_lat: e.layer.getBounds().getNorth(),
+                                                min_lon: e.layer.getBounds().getWest(),
+                                                max_lon: e.layer.getBounds().getEast()
                                             };
                                             
-                                            console.log('[DRAW] Rectangle drawn:', coords);
+                                            console.log('[PARENT-DIRECT] Rectangle drawn:', coords);
                                             
-                                            // Update Shiny hidden inputs for drawn coordinates
                                             if (window.Shiny) {
-                                                console.log('[DRAW] Updating Shiny inputs...');
                                                 Shiny.setInputValue('drawn_min_lat', coords.min_lat);
                                                 Shiny.setInputValue('drawn_max_lat', coords.max_lat);
                                                 Shiny.setInputValue('drawn_min_lon', coords.min_lon);
                                                 Shiny.setInputValue('drawn_max_lon', coords.max_lon);
-                                                console.log('[DRAW] ✓ Coordinates captured and sent to Shiny!');
-                                            } else {
-                                                console.warn('[DRAW] Shiny not available!');
+                                                console.log('[PARENT-DIRECT] ✓ Sent to Shiny!');
                                             }
-                                            
-                                            // Keep the drawn layer visible (don't remove it)
-                                            // User can use the delete tool if they want to remove it
                                         });
                                         
-                                        console.log('[DRAW] ✓ Successfully attached draw listener to Folium map');
-                                        clearInterval(checkInterval);
+                                        console.log('[PARENT-DIRECT] ✓ Direct access method attached');
                                         return;
                                     }
                                 }
                             }
                         }
                     } catch (e) {
-                        // Cross-origin or access error, continue
-                        console.log('[DRAW] Access error (expected for cross-origin):', e.message);
+                        // Expected in cloud environments
                     }
                 }
                 
-                // Stop after max attempts
-                if (checkCount >= maxChecks) {
-                    clearInterval(checkInterval);
-                    console.warn('[DRAW] Could not attach draw listener to map after ' + maxChecks + ' attempts');
+                if (checkCount < maxChecks) {
+                    setTimeout(tryDirectAccess, 100);
                 }
             }
             
-            // Check every 100ms for the map
-            checkInterval = setInterval(setupDrawListener, 100);
-            setupDrawListener(); // Try immediately
+            tryDirectAccess();
+            console.log('[PARENT] ✓ Listeners ready');
         })();
         
         // Override alert to prevent GeoJSON export popups
@@ -465,7 +528,6 @@ def server(input, output, session):
             const originalAlert = window.alert;
             window.alert = function(msg) {
                 if (msg && (msg.includes('"type":"Feature"') || msg.includes('"coordinates"'))) {
-                    console.log('[DRAW] Blocked GeoJSON export popup');
                     return;
                 }
                 originalAlert.apply(window, arguments);
@@ -474,7 +536,7 @@ def server(input, output, session):
         </script>
         """
         
-        return ui.HTML(f'<div style="height: 400px; width: 100%;">{custom_css}{map_html}{custom_js}</div>')
+        return ui.HTML(f'<div style="height: 400px; width: 100%;">{custom_css}{map_html}{parent_js}</div>')
     
     @output
     @render.text
