@@ -65,6 +65,10 @@ app_ui = ui.page_navbar(
                                 # Show drawn coordinates (for debugging)
                                 ui.output_ui("drawn_coords_display"),
                                 
+                                # Additional clear button below drawing section
+                                ui.input_action_button("btn_clear_bbox_drawing", "Clear Drawing 🗑️", 
+                                                      class_="btn-outline-secondary w-100 mb-3"),
+                                
                                 ui.hr(),
                                 
                                 ui.div(
@@ -370,7 +374,7 @@ def server(input, output, session):
                 }},
                 edit: {{
                     featureGroup: drawnItems,
-                    remove: true,
+                    remove: false,
                     edit: false
                 }}
             }});
@@ -524,6 +528,13 @@ def server(input, output, session):
     @reactive.Effect
     @reactive.event(input.btn_clear_bbox)
     def clear_bbox():
+        """Clear bounding box"""
+        aoi_bounds.set(None)
+        print("Bounding box cleared", file=sys.stderr)
+    
+    @reactive.Effect
+    @reactive.event(input.btn_clear_bbox_drawing)
+    def clear_drawing():
         """Clear bounding box"""
         aoi_bounds.set(None)
         print("Bounding box cleared", file=sys.stderr)
