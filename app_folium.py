@@ -299,7 +299,7 @@ def server(input, output, session):
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
         <style>
             #coastalMap {{
-                height: 500px;
+                height: 575px;
                 width: 100%;
                 position: relative;
                 z-index: 1;
