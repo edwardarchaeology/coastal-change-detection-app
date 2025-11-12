@@ -172,44 +172,59 @@ def _meters_to_degrees(meters: float, lat_deg: float) -> float:
     lon_deg_per_m = 1.0 / (111_320.0 * max(np.cos(np.deg2rad(lat_deg)), 1e-6))
     return meters * max(lat_deg_per_m, lon_deg_per_m)  # isotropic simplify
 
-def extract_coastline(polys: List[Polygon], bbox: Dict,
-                      smooth_tolerance_m: float = 0.0,
-                      clip_aoi_edge_within_m: float = 30.0) -> List[LineString]:
+def extract_all_shorelines(
+    polys: List[Polygon], bbox: Dict,
+    smooth_tolerance_m: float = 0.0,
+    clip_aoi_edge_within_m: float = 30.0,
+    min_length_m: float = 20.0,         # drop very short crumbs
+) -> List[LineString]:
     """
-    Coastline = exterior of the *largest* water polygon (ocean), with any parts
-    that coincide with the AOI boundary removed, then (optionally) smoothed.
+    Return ALL water–land boundaries:
+      - exterior of every water polygon (sea/lakes)
+      - interior rings (islands within lakes/sea)
+    Removes any bits that coincide with the AOI frame, then (optionally) smooths.
     """
     if not polys:
         return []
-
-    merged = unary_union(polys)
-    geoms = [merged] if isinstance(merged, Polygon) else list(merged.geoms)
-
-    # 1) Pick the 'ocean' polygon
-    ocean = max(geoms, key=lambda g: g.area)
-
-    # 2) Build AOI box + thin strip around its edges to clip away box-hugging lines
     mid_lat = (bbox["min_lat"] + bbox["max_lat"]) / 2.0
     eps_deg = _meters_to_degrees(clip_aoi_edge_within_m, mid_lat)
+    min_len_deg = _meters_to_degrees(min_length_m, mid_lat)
+    tol_deg = _meters_to_degrees(smooth_tolerance_m, mid_lat) if smooth_tolerance_m else 0.0
+
     aoi = box(bbox["min_lon"], bbox["min_lat"], bbox["max_lon"], bbox["max_lat"])
-    aoi_edge_strip = aoi.boundary.buffer(eps_deg)
+    aoi_strip = aoi.boundary.buffer(eps_deg)
 
-    # 3) Coastline is the ocean exterior minus anything glued to AOI edges
-    coast = LineString(ocean.exterior.coords)
-    coast = coast.difference(aoi_edge_strip)
+    lines: List[LineString] = []
+    for p in polys:
+        # exterior
+        ext = LineString(p.exterior.coords).difference(aoi_strip)
+        if not ext.is_empty:
+            if ext.geom_type == "MultiLineString":
+                lines.extend([ls for ls in ext.geoms if ls.length >= min_len_deg])
+            elif ext.length >= min_len_deg:
+                lines.append(ext)
+        # interior rings (holes = land inside water → also shoreline)
+        for r in p.interiors:
+            ring = LineString(r.coords).difference(aoi_strip)
+            if not ring.is_empty:
+                if ring.geom_type == "MultiLineString":
+                    lines.extend([ls for ls in ring.geoms if ls.length >= min_len_deg])
+                elif ring.length >= min_len_deg:
+                    lines.append(ring)
 
-    # 4) Optional light smoothing (meters input)
-    if smooth_tolerance_m and smooth_tolerance_m > 0:
-        tol_deg = _meters_to_degrees(smooth_tolerance_m, mid_lat)
-        if not coast.is_empty:
-            coast = coast.simplify(tol_deg, preserve_topology=True)
+    # optional smoothing (isotropic simplify in deg)
+    if tol_deg > 0:
+        smoothed = []
+        for ls in lines:
+            s = ls.simplify(tol_deg, preserve_topology=True)
+            if not s.is_empty and s.length >= min_len_deg:
+                if s.geom_type == "MultiLineString":
+                    smoothed.extend([g for g in s.geoms if g.length >= min_len_deg])
+                else:
+                    smoothed.append(s)
+        lines = smoothed
 
-    # 5) Return as list (API-compatible)
-    if coast.is_empty:
-        return []
-    if coast.geom_type == "MultiLineString":
-        return [ls for ls in coast.geoms if not ls.is_empty]
-    return [coast]
+    return lines
 
 # ---------------------------------------------------------------------
 # IO helpers (read/mosaic/resample)  — NOW SUPPORTS REFERENCE GRID
@@ -568,9 +583,13 @@ class CoastalAnalyzer:
 
         # Vectorize & shoreline
         polys = vectorize_mask(water_mask, g_transform, bbox=self.bbox)
-        shores = extract_coastline(polys, bbox=self.bbox,
-                                   smooth_tolerance_m=smooth_tolerance,
-                                   clip_aoi_edge_within_m=30.0)
+        shores = extract_all_shorelines(
+            polys, bbox=self.bbox,
+            smooth_tolerance_m=smooth_tolerance,
+            clip_aoi_edge_within_m=30.0,
+            min_length_m=20.0
+        )
+
 
         # GeoJSON outputs
         poly_fc = {"type": "FeatureCollection", "features": [
