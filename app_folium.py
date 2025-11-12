@@ -52,47 +52,39 @@ app_ui = ui.page_navbar(
                                 ui.h6("Define Area of Interest"),
                                 
                                 ui.div(
-                                    ui.p("📍 Draw a rectangle on the map:", class_="small fw-bold mb-1"),
-                                    ui.p("Use the rectangle tool (◻️) in the top-left of the map to draw your area, then click the button below to confirm.", 
-                                         class_="small text-muted mb-3"),
+                                    ui.p("� Draw on Map (Primary)", class_="small fw-bold mb-1"),
+                                    ui.p("Use the rectangle tool (□) in the map toolbar to draw your area.", 
+                                         class_="small text-muted mb-2"),
+                                    ui.p("Then click below to confirm:", class_="small text-muted mb-1"),
                                 ),
                                 
-                                # Button to set bounding box from drawn rectangle
-                                ui.input_action_button("btn_set_drawn_bbox", "✓ Set Bounding Box from Drawing", 
-                                                      class_="btn-success w-100 mb-3"),
+                                # Button to set bounding box from drawn rectangle  
+                                ui.input_action_button("btn_set_drawn_bbox", "✓ Set from Drawing", 
+                                                      class_="btn-primary w-100 mb-3"),
                                 
                                 # Show drawn coordinates (for debugging)
                                 ui.output_ui("drawn_coords_display"),
                                 
-                                # Hidden inputs to receive drawn coordinates
-                                ui.input_numeric("drawn_min_lat", "", value=None),
-                                ui.input_numeric("drawn_max_lat", "", value=None),
-                                ui.input_numeric("drawn_min_lon", "", value=None),
-                                ui.input_numeric("drawn_max_lon", "", value=None),
-                                ui.tags.style("#drawn_min_lat, #drawn_max_lat, #drawn_min_lon, #drawn_max_lon { display: none; }"),
+                                ui.hr(),
+                                
+                                ui.div(
+                                    ui.p("� Manual Entry (Alternative)", class_="small fw-bold mb-1"),
+                                    ui.p("Or enter coordinates directly:", class_="small text-muted mb-2"),
+                                ),
+                                
+                                # Manual coordinate inputs
+                                ui.input_numeric("min_lat", "Min Latitude (South)", value=None, step=0.001, width="100%"),
+                                ui.input_numeric("max_lat", "Max Latitude (North)", value=None, step=0.001, width="100%"),
+                                ui.input_numeric("min_lon", "Min Longitude (West)", value=None, step=0.001, width="100%"),
+                                ui.input_numeric("max_lon", "Max Longitude (East)", value=None, step=0.001, width="100%"),
+                                ui.tags.small("Example: Grand Isle, LA → Lat: 29.23 to 29.27, Lon: -90.12 to -90.08", 
+                                             class_="text-muted d-block mb-2"),
+                                ui.input_action_button("btn_set_bbox", "✓ Set Bounding Box", class_="btn-success w-100 mb-3"),
                                 
                                 # Status display
                                 ui.div(
                                     ui.output_text("aoi_status"),
                                     class_="alert alert-info py-2 px-3 mb-3 small"
-                                ),
-                                
-                                # Collapsible manual coordinate entry (for advanced users)
-                                ui.accordion(
-                                    ui.accordion_panel(
-                                        "▸ Advanced: Manual Coordinate Entry",
-                                        ui.p("For precise control, enter exact lat/lon bounds:", class_="small text-muted mb-2"),
-                                        ui.input_numeric("min_lat", "Min Latitude (South)", value=None, step=0.001),
-                                        ui.input_numeric("max_lat", "Max Latitude (North)", value=None, step=0.001),
-                                        ui.input_numeric("min_lon", "Min Longitude (West)", value=None, step=0.001),
-                                        ui.input_numeric("max_lon", "Max Longitude (East)", value=None, step=0.001),
-                                        ui.tags.small("Example: Grand Isle, LA is approximately 29.25 to 29.27 (lat), -90.15 to -90.12 (lon)", 
-                                                     class_="text-muted d-block mt-2"),
-                                        ui.input_action_button("btn_set_bbox", "Set from Manual Coordinates", class_="btn-primary w-100 mt-2"),
-                                    ),
-                                    id="coord_accordion",
-                                    open=False,
-                                    class_="mb-3"
                                 ),
                                 
                                 ui.input_action_button("btn_clear_bbox", "Clear Bounding Box", class_="btn-secondary w-100 btn-sm"),
@@ -279,354 +271,147 @@ def server(input, output, session):
     @output
     @render.ui
     def map_ui():
-        """Render Folium map as HTML"""
+        """Render custom Leaflet map (NOT in iframe) for reliable drawing"""
         # Get basemap selection
         basemap_choice = input.basemap() if hasattr(input, 'basemap') else 'satellite'
         
         # Define basemap tiles
         if basemap_choice == 'grayscale':
-            tiles = 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}'
+            tiles_url = 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}'
             attr = 'Esri Grayscale'
         else:  # satellite
-            tiles = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
+            tiles_url = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
             attr = 'Esri Satellite'
         
         # Get current bounds to determine map center
         bounds = aoi_bounds.get()
         if bounds:
-            # Center map on the bounding box
             center_lat = (bounds['min_lat'] + bounds['max_lat']) / 2
             center_lon = (bounds['min_lon'] + bounds['max_lon']) / 2
-            center_location = (center_lat, center_lon)
+            zoom = DEFAULT_ZOOM
         else:
-            center_location = map_center.get()
+            center_lat, center_lon = DEFAULT_CENTER
+            zoom = DEFAULT_ZOOM
         
-        # Create map
-        m = folium.Map(
-            location=center_location,
-            zoom_start=DEFAULT_ZOOM,
-            tiles=tiles,
-            attr=attr
-        )
-        
-        # If AOI is set, draw it
-        bounds = aoi_bounds.get()
-        if bounds:
-            sw = [bounds['min_lat'], bounds['min_lon']]
-            ne = [bounds['max_lat'], bounds['max_lon']]
-            folium.Rectangle(
-                bounds=[sw, ne],
-                color='#FFD700',
-                fill=True,
-                fillColor='#FFD700',
-                fillOpacity=0.3,
-                weight=4,
-                popup='Area of Interest'
-            ).add_to(m)
-        
-        # Add Draw control for interactive drawing
-        draw = plugins.Draw(
-            export=False,  # Disable export to prevent JSON popup
-            position='topleft',
-            draw_options={
-                'polyline': False,
-                'polygon': False,
-                'circle': False,
-                'marker': False,
-                'circlemarker': False,
-                'rectangle': {
-                    'shapeOptions': {
-                        'color': '#00FFFF',
-                        'weight': 3,
-                        'fillOpacity': 0.3
-                    }
-                }
-            },
-            edit_options={'edit': False, 'remove': True}
-        )
-        draw.add_to(m)
-        
-        # Add custom MacroElement to inject JavaScript that updates a global variable
-        from branca.element import MacroElement
-        from jinja2 import Template
-        
-        draw_handler_js = MacroElement()
-        draw_handler_js._template = Template("""
-        {% macro script(this, kwargs) %}
-        (function() {
-            console.log('[MACRO] Setting up draw handler...');
-            
-            // Wait for map to be ready
-            function setupDraw() {
-                if (typeof map === 'undefined') {
-                    setTimeout(setupDraw, 100);
-                    return;
-                }
-                
-                console.log('[MACRO] Map found, attaching draw event...');
-                
-                map.on('draw:created', function(e) {
-                    var bounds = e.layer.getBounds();
-                    var coords = {
-                        min_lat: bounds.getSouth(),
-                        max_lat: bounds.getNorth(),
-                        min_lon: bounds.getWest(),
-                        max_lon: bounds.getEast()
-                    };
-                    
-                    console.log('[MACRO] Rectangle drawn:', coords);
-                    
-                    // Store in global variable that parent can access
-                    window.drawnBounds = coords;
-                    
-                    // Try to send to parent via postMessage
-                    try {
-                        window.parent.postMessage({
-                            type: 'DRAWN_BBOX',
-                            coords: coords
-                        }, '*');
-                        console.log('[MACRO] Sent postMessage to parent');
-                    } catch(e) {
-                        console.log('[MACRO] postMessage failed:', e);
-                    }
-                    
-                    // Try to update a global function if it exists
-                    if (window.parent.updateDrawnCoords) {
-                        window.parent.updateDrawnCoords(coords);
-                    }
-                    
-                    // Also try localStorage as a backup (works cross-domain)
-                    try {
-                        localStorage.setItem('drawnBounds', JSON.stringify(coords));
-                        localStorage.setItem('drawnBoundsTime', Date.now().toString());
-                        console.log('[MACRO] Saved to localStorage');
-                    } catch(e) {
-                        console.log('[MACRO] localStorage failed:', e);
-                    }
-                });
-                
-                console.log('[MACRO] Draw event handler attached!');
-            }
-            
-            setupDraw();
-        })();
-        {% endmacro %}
-        """)
-        m.get_root().add_child(draw_handler_js)
-        
-        # Add fullscreen
-        plugins.Fullscreen(position='topleft').add_to(m)
-        
-        # Add scale
-        plugins.MeasureControl(position='bottomleft').add_to(m)
-        
-        # Get HTML
-        map_html = m._repr_html_()
-        
-        # Add custom CSS to hide the export popup/modal
-        custom_css = """
+        # Create custom Leaflet HTML (NO IFRAME - direct rendering)
+        map_html = f"""
+        <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
         <style>
-        /* Hide Leaflet Draw export modal/popup */
-        .leaflet-draw-actions-bottom,
-        .leaflet-draw-toolbar-button-export,
-        .leaflet-draw-section:has(.leaflet-draw-edit-export),
-        [data-action="export"],
-        button[title*="xport"],
-        .leaflet-popup-pane .leaflet-popup:has(pre) {
-            display: none !important;
-        }
-        
-        /* Also hide any alert/modal dialogs that might be GeoJSON popups */
-        div[role="dialog"]:has(pre),
-        div.modal:has(pre) {
-            display: none !important;
-        }
+            #coastalMap {{
+                height: 400px;
+                width: 100%;
+                position: relative;
+                z-index: 1;
+            }}
         </style>
-        """
         
-        # JavaScript to inject INSIDE the iframe (in the map HTML itself)
-        # This works in cloud environments where iframe access is blocked
-        iframe_js = """
+        <div id="coastalMap"></div>
+        
         <script>
-        (function() {
-            console.log('[IFRAME-INJECT] Setting up draw handler inside iframe...');
-            
-            function setupDrawHandler() {
-                // Find the Leaflet map instance
-                var mapElement = document.querySelector('.folium-map');
-                if (!mapElement || !mapElement._leaflet_id) {
-                    console.log('[IFRAME-INJECT] Map not ready, retrying...');
-                    setTimeout(setupDrawHandler, 100);
-                    return;
-                }
-                
-                // Get the map from the global window object
-                for (var key in window) {
-                    var obj = window[key];
-                    if (obj && obj._container === mapElement) {
-                        var map = obj;
-                        console.log('[IFRAME-INJECT] Map instance found!');
-                        
-                        // Attach draw:created event
-                        map.on('draw:created', function(e) {
-                            var layer = e.layer;
-                            var bounds = layer.getBounds();
-                            
-                            var coords = {
-                                min_lat: bounds.getSouth(),
-                                max_lat: bounds.getNorth(),
-                                min_lon: bounds.getWest(),
-                                max_lon: bounds.getEast()
-                            };
-                            
-                            console.log('[IFRAME-INJECT] Rectangle drawn:', coords);
-                            
-                            // Send to parent window using postMessage
-                            window.parent.postMessage({
-                                type: 'DRAWN_BBOX',
-                                coords: coords
-                            }, '*');
-                            console.log('[IFRAME-INJECT] ✓ Sent coordinates to parent via postMessage');
-                        });
-                        
-                        console.log('[IFRAME-INJECT] ✓ Draw handler attached successfully!');
-                        return;
-                    }
-                }
-            }
-            
-            // Start setup when DOM is ready
-            if (document.readyState === 'loading') {
-                document.addEventListener('DOMContentLoaded', setupDrawHandler);
-            } else {
-                setupDrawHandler();
-            }
-        })();
-        </script>
-        """
+        // Load Leaflet library first
+        if (typeof window.leafletLoaded === 'undefined') {{
+            window.leafletLoaded = new Promise((resolve, reject) => {{
+                var leafletScript = document.createElement('script');
+                leafletScript.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+                leafletScript.onload = function() {{
+                    console.log('[MAP] Leaflet core loaded');
+                    
+                    // Load Leaflet Draw
+                    var drawScript = document.createElement('script');
+                    drawScript.src = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js';
+                    drawScript.onload = function() {{
+                        console.log('[MAP] Leaflet.draw loaded');
+                        resolve();
+                    }};
+                    drawScript.onerror = reject;
+                    document.head.appendChild(drawScript);
+                }};
+                leafletScript.onerror = reject;
+                document.head.appendChild(leafletScript);
+            }});
+        }}
         
-        # Inject the JavaScript into the map HTML (before </body>)
-        map_html = map_html.replace('</body>', iframe_js + '</body>')
-        
-        # Parent window JavaScript to receive coordinates via multiple methods
-        parent_js = """
-        <script>
-        (function() {
-            console.log('[PARENT] Setting up listeners...');
-            let lastProcessedTime = 0;
+        // Initialize map after libraries load
+        window.leafletLoaded.then(function() {{
+            console.log('[MAP] Initializing Leaflet map...');
             
-            // Method 1: Listen for postMessage from iframe
-            window.addEventListener('message', function(event) {
-                if (event.data && event.data.type === 'DRAWN_BBOX') {
-                    var coords = event.data.coords;
-                    console.log('[PARENT-MSG] ✓ Received coordinates via postMessage:', coords);
-                    updateShinyInputs(coords);
-                }
-            });
+            // Create map
+            var map = L.map('coastalMap').setView([{center_lat}, {center_lon}], {zoom});
             
-            // Method 2: Poll localStorage (fallback for sandboxed iframes)
-            function checkLocalStorage() {
-                try {
-                    var timeStr = localStorage.getItem('drawnBoundsTime');
-                    if (timeStr) {
-                        var time = parseInt(timeStr);
-                        if (time > lastProcessedTime) {
-                            var coordsStr = localStorage.getItem('drawnBounds');
-                            if (coordsStr) {
-                                var coords = JSON.parse(coordsStr);
-                                console.log('[PARENT-STORAGE] ✓ Received coordinates via localStorage:', coords);
-                                updateShinyInputs(coords);
-                                lastProcessedTime = time;
-                            }
-                        }
-                    }
-                } catch(e) {
-                    // localStorage not available or blocked
-                }
-            }
+            // Add basemap
+            L.tileLayer('{tiles_url}', {{
+                attribution: '{attr}',
+                maxZoom: 19
+            }}).addTo(map);
             
-            // Poll localStorage every 500ms
-            setInterval(checkLocalStorage, 500);
+            // Add existing AOI if present
+            {'var aoiRect = L.rectangle([[' + str(bounds['min_lat']) + ',' + str(bounds['min_lon']) + '],[' + str(bounds['max_lat']) + ',' + str(bounds['max_lon']) + ']], {color: "#FFD700", fillColor: "#FFD700", fillOpacity: 0.3, weight: 4}).addTo(map);' if bounds else ''}
             
-            // Method 3: Try direct iframe access (for local development)
-            let checkCount = 0;
-            const maxChecks = 30;
+            // Add draw control
+            var drawnItems = new L.FeatureGroup();
+            map.addLayer(drawnItems);
             
-            function tryDirectAccess() {
-                checkCount++;
-                const iframes = document.querySelectorAll('iframe');
+            var drawControl = new L.Control.Draw({{
+                position: 'topleft',
+                draw: {{
+                    polyline: false,
+                    polygon: false,
+                    circle: false,
+                    marker: false,
+                    circlemarker: false,
+                    rectangle: {{
+                        shapeOptions: {{
+                            color: '#00FFFF',
+                            weight: 3,
+                            fillOpacity: 0.3
+                        }}
+                    }}
+                }},
+                edit: {{
+                    featureGroup: drawnItems,
+                    remove: true,
+                    edit: false
+                }}
+            }});
+            map.addControl(drawControl);
+            
+            // Handle drawing
+            map.on('draw:created', function(e) {{
+                var layer = e.layer;
+                drawnItems.addLayer(layer);
                 
-                for (let iframe of iframes) {
-                    try {
-                        const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
-                        const mapDivs = iframeDoc.querySelectorAll('.folium-map');
-                        
-                        for (let mapDiv of mapDivs) {
-                            if (mapDiv._leaflet_id && iframeDoc.defaultView.L) {
-                                for (let key in iframeDoc.defaultView) {
-                                    const obj = iframeDoc.defaultView[key];
-                                    if (obj && obj._container === mapDiv) {
-                                        const map = obj;
-                                        
-                                        map.on('draw:created', function(e) {
-                                            const coords = {
-                                                min_lat: e.layer.getBounds().getSouth(),
-                                                max_lat: e.layer.getBounds().getNorth(),
-                                                min_lon: e.layer.getBounds().getWest(),
-                                                max_lon: e.layer.getBounds().getEast()
-                                            };
-                                            
-                                            console.log('[PARENT-DIRECT] ✓ Received coordinates via direct access:', coords);
-                                            updateShinyInputs(coords);
-                                        });
-                                        
-                                        console.log('[PARENT-DIRECT] ✓ Direct access method attached');
-                                        return;
-                                    }
-                                }
-                            }
-                        }
-                    } catch (e) {
-                        // Expected in cloud environments
-                    }
-                }
+                var bounds = layer.getBounds();
+                var coords = {{
+                    min_lat: bounds.getSouth(),
+                    max_lat: bounds.getNorth(),
+                    min_lon: bounds.getWest(),
+                    max_lon: bounds.getEast()
+                }};
                 
-                if (checkCount < maxChecks) {
-                    setTimeout(tryDirectAccess, 100);
-                }
-            }
-            
-            // Helper function to update Shiny inputs
-            function updateShinyInputs(coords) {
-                if (window.Shiny) {
+                console.log('[MAP] Rectangle drawn:', coords);
+                
+                // Update Shiny inputs directly (no iframe barriers!)
+                if (window.Shiny) {{
                     Shiny.setInputValue('drawn_min_lat', coords.min_lat);
                     Shiny.setInputValue('drawn_max_lat', coords.max_lat);
                     Shiny.setInputValue('drawn_min_lon', coords.min_lon);
                     Shiny.setInputValue('drawn_max_lon', coords.max_lon);
-                    console.log('[PARENT] ✓ Sent to Shiny!');
-                } else {
-                    console.warn('[PARENT] Shiny not available');
-                }
-            }
+                    console.log('[MAP] ✓ Coordinates sent to Shiny!');
+                }}
+            }});
             
-            tryDirectAccess();
-            console.log('[PARENT] ✓ All listeners ready');
-        })();
-        
-        // Override alert to prevent GeoJSON export popups
-        (function() {
-            const originalAlert = window.alert;
-            window.alert = function(msg) {
-                if (msg && (msg.includes('"type":"Feature"') || msg.includes('"coordinates"'))) {
-                    return;
-                }
-                originalAlert.apply(window, arguments);
-            };
-        })();
+            // Add scale
+            L.control.scale({{position: 'bottomleft'}}).addTo(map);
+            
+            console.log('[MAP] ✓ Map initialized successfully!');
+        }}).catch(function(error) {{
+            console.error('[MAP] Failed to load Leaflet:', error);
+        }});
         </script>
         """
         
-        return ui.HTML(f'<div style="height: 400px; width: 100%;">{custom_css}{map_html}{parent_js}</div>')
+        return ui.HTML(map_html)
     
     @output
     @render.text
