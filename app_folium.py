@@ -294,7 +294,8 @@ def server(input, output, session):
             center_lon = (bounds['min_lon'] + bounds['max_lon']) / 2
             zoom = DEFAULT_ZOOM
         else:
-            center_lat, center_lon = DEFAULT_CENTER
+            # use the reactive map_center (so user panning is preserved)
+            center_lat, center_lon = map_center.get()
             zoom = DEFAULT_ZOOM
         
         # Create custom Leaflet HTML (NO IFRAME - direct rendering)
@@ -379,6 +380,20 @@ def server(input, output, session):
                 }}
             }});
             map.addControl(drawControl);
+
+            // Report initial center back to Shiny so server can remember pan/zoom
+            if (window.Shiny) {{
+                var c = map.getCenter();
+                Shiny.setInputValue('map_center', {{lat: c.lat, lon: c.lng}});
+            }}
+
+            // Update server with center whenever user pans/zooms
+            map.on('moveend', function() {{
+                if (window.Shiny) {{
+                    var c = map.getCenter();
+                    Shiny.setInputValue('map_center', {{lat: c.lat, lon: c.lng}});
+                }}
+            }});
             
             // Handle drawing
             map.on('draw:created', function(e) {{
@@ -538,6 +553,27 @@ def server(input, output, session):
         """Clear bounding box"""
         aoi_bounds.set(None)
         print("Bounding box cleared", file=sys.stderr)
+
+    @reactive.Effect
+    @reactive.event(input.map_center)
+    def update_map_center():
+        """Update server-side reactive center when JS informs of map center"""
+        try:
+            val = input.map_center()
+            if not val:
+                return
+            # val expected as a dict with lat and lon
+            if isinstance(val, dict):
+                lat = float(val.get('lat', DEFAULT_CENTER[0]))
+                lon = float(val.get('lon', DEFAULT_CENTER[1]))
+            elif isinstance(val, (list, tuple)) and len(val) >= 2:
+                lat = float(val[0]); lon = float(val[1])
+            else:
+                return
+            map_center.set((lat, lon))
+            # do not modify aoi_bounds here
+        except Exception as e:
+            print(f"Error updating map_center from input: {e}", file=sys.stderr)
     
     @reactive.Effect
     @reactive.event(input.btn_set_drawn_bbox)
