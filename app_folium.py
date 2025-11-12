@@ -52,7 +52,7 @@ app_ui = ui.page_navbar(
                                 ui.h6("Define Area of Interest"),
                                 
                                 ui.div(
-                                    ui.p("� Draw on Map (Primary)", class_="small fw-bold mb-1"),
+                                    ui.p("✏️ Draw on Map (Primary)", class_="small fw-bold mb-1"),
                                     ui.p("Use the rectangle tool (□) in the map toolbar to draw your area.", 
                                          class_="small text-muted mb-2"),
                                     ui.p("Then click below to confirm:", class_="small text-muted mb-1"),
@@ -68,7 +68,7 @@ app_ui = ui.page_navbar(
                                 ui.hr(),
                                 
                                 ui.div(
-                                    ui.p("� Manual Entry (Alternative)", class_="small fw-bold mb-1"),
+                                    ui.p("⌨️ Manual Entry (Alternative)", class_="small fw-bold mb-1"),
                                     ui.p("Or enter coordinates directly:", class_="small text-muted mb-2"),
                                 ),
                                 
@@ -88,7 +88,7 @@ app_ui = ui.page_navbar(
                                 ),
                                 
                                 ui.input_action_button("btn_clear_bbox", "Clear Bounding Box", class_="btn-secondary w-100 btn-sm"),
-                                style="height: 400px; overflow-y: auto;"
+                                style="height: 500px; overflow-y: auto;"
                             ),
                         ),
                     ),
@@ -299,7 +299,7 @@ def server(input, output, session):
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
         <style>
             #coastalMap {{
-                height: 400px;
+                height: 500px;
                 width: 100%;
                 position: relative;
                 z-index: 1;
