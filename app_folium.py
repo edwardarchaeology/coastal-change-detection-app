@@ -387,13 +387,12 @@ def server(input, output, session):
                 Shiny.setInputValue('map_center', {{lat: c.lat, lon: c.lng}});
             }}
 
-            // Update server with center whenever user pans/zooms
-            map.on('moveend', function() {{
-                if (window.Shiny) {{
-                    var c = map.getCenter();
-                    Shiny.setInputValue('map_center', {{lat: c.lat, lon: c.lng}});
-                }}
-            }});
+            // NOTE: continuous updates of the map center on every pan/zoom (moveend)
+            // can cause the server to re-render the map UI and produce a reset loop
+            // on hosted platforms like Posit Connect. To avoid that behavior we do
+            // NOT send the center on every move. If you need to persist the view
+            // on the server, send it explicitly (for example when the user clicks
+            // a "Save view" button) or on specific events like setting the AOI.
             
             // Handle drawing
             map.on('draw:created', function(e) {{
