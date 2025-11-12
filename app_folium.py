@@ -51,39 +51,38 @@ app_ui = ui.page_navbar(
                                 ui.hr(),
                                 ui.h6("Define Area of Interest"),
                                 
-                                # Set Bounding Box button at the top
-                                ui.input_action_button("btn_set_bbox", "✓ Set Bounding Box", class_="btn-success w-100 mb-3 btn-lg fw-bold"),
-                                ui.p("👆 CLICK THIS after drawing rectangle or entering coordinates", class_="small text-success text-center mb-3 fw-bold"),
-                                
                                 ui.div(
                                     ui.div(
-                                        ui.p("⚠️ After drawing a rectangle on the map:", class_="small fw-bold text-warning mb-1"),
-                                        ui.p("Click the 'Set Bounding Box' button above to confirm your selection", 
+                                        ui.p("⚠️ Important for Posit Connect Cloud users:", class_="small fw-bold text-warning mb-1"),
+                                        ui.p("After drawing, you MUST manually enter the coordinates in 'Manual Coordinate Entry' below and click 'Set Bounding Box'", 
                                              class_="small text-warning mb-2"),
                                         class_="alert alert-warning py-2 px-2 mb-2"
                                     ),
-                                    ui.p("📍 Option 1: Draw on map", class_="small fw-bold mb-1"),
-                                    ui.p("Use the rectangle tool (◻️) in top-left of map, draw your area, then click 'Set Bounding Box' above", 
-                                         class_="small text-muted mb-2"),
-                                    ui.p("📝 Option 2: Enter coordinates manually", class_="small fw-bold mb-1"),
-                                    ui.p("Expand 'Manual Coordinate Entry' below to enter lat/lon values", 
+                                    ui.p("📍 Drawing on the map:", class_="small fw-bold mb-1"),
+                                    ui.p("Use the rectangle tool (◻️) in top-left of map to visualize your area, then manually enter the coordinates shown", 
                                          class_="small text-muted mb-2"),
                                 ),
                                 
-                                # Collapsible manual coordinate entry
+                                # Collapsible manual coordinate entry - NOW OPEN BY DEFAULT
                                 ui.accordion(
                                     ui.accordion_panel(
-                                        "📝 Manual Coordinate Entry",
-                                        ui.p("Enter lat/lon values:", class_="small text-muted mb-2"),
-                                        ui.input_numeric("min_lat", "Min Latitude (South)", value=29.25, step=0.001),
-                                        ui.input_numeric("max_lat", "Max Latitude (North)", value=29.27, step=0.001),
-                                        ui.input_numeric("min_lon", "Min Longitude (West)", value=-90.15, step=0.001),
-                                        ui.input_numeric("max_lon", "Max Longitude (East)", value=-90.12, step=0.001),
+                                        "📝 Coordinate Entry (Required)",
+                                        ui.p("Enter the lat/lon bounds for your area of interest:", class_="small text-muted mb-2"),
+                                        ui.input_numeric("min_lat", "Min Latitude (South)", value=None, step=0.001),
+                                        ui.input_numeric("max_lat", "Max Latitude (North)", value=None, step=0.001),
+                                        ui.input_numeric("min_lon", "Min Longitude (West)", value=None, step=0.001),
+                                        ui.input_numeric("max_lon", "Max Longitude (East)", value=None, step=0.001),
+                                        ui.tags.small("Example: Grand Isle, LA is approximately 29.25 to 29.27 (lat), -90.15 to -90.12 (lon)", 
+                                                     class_="text-muted d-block mt-2"),
                                     ),
                                     id="coord_accordion",
-                                    open=False,
+                                    open=True,  # Open by default so users see the fields
                                     class_="mb-3"
                                 ),
+                                
+                                # Set Bounding Box button
+                                ui.input_action_button("btn_set_bbox", "✓ Set Bounding Box", class_="btn-success w-100 mb-2 btn-lg fw-bold"),
+                                ui.p("👆 CLICK THIS after entering coordinates above", class_="small text-success text-center mb-3 fw-bold"),
                                 
                                 ui.input_action_button("btn_clear_bbox", "Clear Bounding Box", class_="btn-secondary w-100 btn-sm"),
                                 style="height: 400px; overflow-y: auto;"
@@ -520,14 +519,45 @@ def server(input, output, session):
     def set_bbox():
         """Set bounding box from input coordinates"""
         try:
+            # Validate all coordinates are provided
+            min_lat = input.min_lat()
+            max_lat = input.max_lat()
+            min_lon = input.min_lon()
+            max_lon = input.max_lon()
+            
+            if any(coord is None for coord in [min_lat, max_lat, min_lon, max_lon]):
+                ui.notification_show(
+                    "⚠️ Please enter ALL coordinate values (Min/Max Latitude and Min/Max Longitude)",
+                    type="error",
+                    duration=5
+                )
+                return
+            
+            # Validate coordinate ranges
+            if not (-90 <= min_lat <= 90 and -90 <= max_lat <= 90):
+                ui.notification_show(
+                    "⚠️ Latitude values must be between -90 and 90",
+                    type="error",
+                    duration=5
+                )
+                return
+                
+            if not (-180 <= min_lon <= 180 and -180 <= max_lon <= 180):
+                ui.notification_show(
+                    "⚠️ Longitude values must be between -180 and 180",
+                    type="error",
+                    duration=5
+                )
+                return
+            
             bounds = {
-                'min_lon': input.min_lon(),
-                'max_lon': input.max_lon(),
-                'min_lat': input.min_lat(),
-                'max_lat': input.max_lat()
+                'min_lon': min_lon,
+                'max_lon': max_lon,
+                'min_lat': min_lat,
+                'max_lat': max_lat
             }
             
-            # Validate
+            # Validate min < max
             if bounds['min_lon'] >= bounds['max_lon']:
                 ui.notification_show("❌ Min longitude must be less than max longitude", type="error", duration=3)
                 return
