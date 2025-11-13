@@ -72,19 +72,22 @@ app_ui = ui.page_navbar(
                                 
                                 ui.hr(),
                                 
-                                ui.div(
-                                    ui.p("⌨️ Manual Entry (Alternative)", class_="small fw-bold mb-1"),
-                                    ui.p("Or enter coordinates directly:", class_="small text-muted mb-2"),
+                                # Manual entry moved into a collapsible <details> container
+                                ui.tags.details(
+                                    ui.tags.summary("⌨️ Manual Entry (Alternative) - click to expand"),
+                                    ui.div(
+                                        ui.p("Or enter coordinates directly:", class_="small text-muted mb-2"),
+                                        # Manual coordinate inputs
+                                        ui.input_numeric("min_lat", "Min Latitude (South)", value=None, step=0.001, width="100%"),
+                                        ui.input_numeric("max_lat", "Max Latitude (North)", value=None, step=0.001, width="100%"),
+                                        ui.input_numeric("min_lon", "Min Longitude (West)", value=None, step=0.001, width="100%"),
+                                        ui.input_numeric("max_lon", "Max Longitude (East)", value=None, step=0.001, width="100%"),
+                                        ui.tags.small("Example: Grand Isle, LA → Lat: 29.23 to 29.27, Lon: -90.12 to -90.08", 
+                                                     class_="text-muted d-block mb-2"),
+                                        ui.input_action_button("btn_set_bbox", "✓ Set Bounding Box", class_="btn-success w-100 mb-3"),
+                                        class_="mb-2"
+                                    )
                                 ),
-                                
-                                # Manual coordinate inputs
-                                ui.input_numeric("min_lat", "Min Latitude (South)", value=None, step=0.001, width="100%"),
-                                ui.input_numeric("max_lat", "Max Latitude (North)", value=None, step=0.001, width="100%"),
-                                ui.input_numeric("min_lon", "Min Longitude (West)", value=None, step=0.001, width="100%"),
-                                ui.input_numeric("max_lon", "Max Longitude (East)", value=None, step=0.001, width="100%"),
-                                ui.tags.small("Example: Grand Isle, LA → Lat: 29.23 to 29.27, Lon: -90.12 to -90.08", 
-                                             class_="text-muted d-block mb-2"),
-                                ui.input_action_button("btn_set_bbox", "✓ Set Bounding Box", class_="btn-success w-100 mb-3"),
                                 
                                 # Status display
                                 ui.div(
@@ -176,6 +179,11 @@ app_ui = ui.page_navbar(
                             
                             ui.hr(),
                             ui.input_action_button("btn_run", "▶️  RUN ANALYSIS", class_="btn-success btn-lg w-100"),
+                            ui.input_switch(
+                                "artifact_cleanup",
+                                "Attempt to remove artefacts",
+                                value=False
+                            )
                         ),
                         
                         col_widths=[3, 3, 3, 3]
@@ -357,7 +365,7 @@ def server(input, output, session):
             }}).addTo(map);
             
             // Add existing AOI if present
-            {'var aoiRect = L.rectangle([[' + str(bounds['min_lat']) + ',' + str(bounds['min_lon']) + '],[' + str(bounds['max_lat']) + ',' + str(bounds['max_lon']) + ']], {color: "#FFD700", fillColor: "#FFD700", fillOpacity: 0.3, weight: 4}).addTo(map);' if bounds else ''}
+            {'var aoiRect = L.rectangle([[' + str(bounds['min_lat']) + ',' + str(bounds['min_lon']) + '],[' + str(bounds['max_lat']) + ',' + str(bounds['max_lon']) + ']], {color: "#E6B800", fillColor: "#E6B800", fillOpacity: 0.28, weight: 4}).addTo(map);' if bounds else ''}
             
             // Add draw control
             var drawnItems = new L.FeatureGroup();
@@ -703,7 +711,8 @@ def server(input, output, session):
             'morph_kernel': input.kernel() if input.refine() else 3,
             'smooth_tolerance': input.tolerance() if input.smooth() else 0.0,
             'offset_days': input.offset_days() if input.analysis_mode() == 'change' else 365,
-            'max_scenes': input.max_scenes()
+            'max_scenes': input.max_scenes(),
+            "artifact_cleanup": input.artifact_cleanup()
         }
         
         # Run analysis
@@ -920,10 +929,10 @@ def server(input, output, session):
                 data['water'],
                 name='💧 Water Bodies',
                 style_function=lambda x: {
-                    'fillColor': '#3399ff',
-                    'color': '#3399ff',
+                    'fillColor': '#4DA6FF',
+                    'color': '#4DA6FF',
                     'weight': 2,
-                    'fillOpacity': 0.5
+                    'fillOpacity': 0.45
                 },
                 show=True
             ).add_to(m)
@@ -935,9 +944,9 @@ def server(input, output, session):
                 data['shoreline'],
                 name='🌊 Shoreline',
                 style_function=lambda x: {
-                    'color': '#FFD700',
-                    'weight': 5,
-                    'opacity': 1.0
+                    'color': '#E6B800',
+                    'weight': 4,
+                    'opacity': 0.95
                 },
                 show=True
             ).add_to(m)
@@ -1077,10 +1086,10 @@ def server(input, output, session):
                 data['progradation'],
                 name='🟢 Land Gained (Progradation)',
                 style_function=lambda x: {
-                    'fillColor': '#00ff00',
-                    'color': '#00ff00',
+                    'fillColor': '#2ECC71',
+                    'color': '#2ECC71',
                     'weight': 2,
-                    'fillOpacity': 0.6
+                    'fillOpacity': 0.55
                 },
                 show=True
             ).add_to(m)
@@ -1091,10 +1100,10 @@ def server(input, output, session):
                 data['retreat'],
                 name='🔴 Land Lost (Retreat)',
                 style_function=lambda x: {
-                    'fillColor': '#ff0000',
-                    'color': '#ff0000',
+                    'fillColor': '#D64545',
+                    'color': '#D64545',
                     'weight': 2,
-                    'fillOpacity': 0.6
+                    'fillOpacity': 0.55
                 },
                 show=True
             ).add_to(m)
@@ -1105,10 +1114,10 @@ def server(input, output, session):
                 data['now']['water'],
                 name='💙 Current Water',
                 style_function=lambda x: {
-                    'fillColor': '#0099ff',
-                    'color': '#0099ff',
+                    'fillColor': '#4DA6FF',
+                    'color': '#4DA6FF',
                     'weight': 2,
-                    'fillOpacity': 0.4
+                    'fillOpacity': 0.38
                 },
                 show=False
             ).add_to(m)
@@ -1119,10 +1128,10 @@ def server(input, output, session):
                 data['then']['water'],
                 name='🩷 Past Water',
                 style_function=lambda x: {
-                    'fillColor': '#ff6666',
-                    'color': '#ff6666',
+                    'fillColor': '#F7A1A1',
+                    'color': '#F7A1A1',
                     'weight': 2,
-                    'fillOpacity': 0.4
+                    'fillOpacity': 0.38
                 },
                 show=False
             ).add_to(m)
@@ -1133,9 +1142,9 @@ def server(input, output, session):
                 data['now']['shoreline'],
                 name='🔵 Current Shoreline',
                 style_function=lambda x: {
-                    'color': '#00FFFF',
-                    'weight': 5,
-                    'opacity': 1.0
+                    'color': '#2A9DF4',
+                    'weight': 4,
+                    'opacity': 0.95
                 },
                 show=True
             ).add_to(m)
@@ -1146,9 +1155,9 @@ def server(input, output, session):
                 data['then']['shoreline'],
                 name='🟣 Past Shoreline',
                 style_function=lambda x: {
-                    'color': '#FF00FF',
-                    'weight': 5,
-                    'opacity': 1.0,
+                    'color': '#8E6AAE',
+                    'weight': 4,
+                    'opacity': 0.9,
                     'dashArray': '10, 5'
                 },
                 show=True

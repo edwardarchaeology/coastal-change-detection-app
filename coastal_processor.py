@@ -21,6 +21,8 @@ from shapely.ops import unary_union
 
 from pystac_client import Client
 from scipy.ndimage import zoom, binary_closing, binary_dilation
+from skimage.morphology import remove_small_objects
+from scipy.ndimage import binary_opening, binary_closing
 from PIL import Image
 
 try:
@@ -110,62 +112,138 @@ def ndwi_to_watermask(ndwi: np.ndarray, thresh: float = 0.0, method: str = "fixe
 # ---------------------------------------------------------------------
 # Morphology / vectorization / shoreline
 # ---------------------------------------------------------------------
-def refine_water_mask(mask: np.ndarray, kernel_size: int = 3) -> np.ndarray:
+def refine_water_mask(
+    mask: np.ndarray,
+    kernel_size: int = 3,
+    min_blob_pixels: int = 0,
+    open_then_close: bool = False
+) -> np.ndarray:
     """
-    Clean water mask with morphological operations.
-    Prefer closing-only to preserve narrow coastal features at 10 m.
-    """
-    kernel = np.ones((kernel_size, kernel_size), dtype=bool)
-    mask_clean = binary_closing(mask.astype(bool), structure=kernel)
-    return mask_clean.astype(np.uint8)
+    Morphologically clean the water mask.
 
-def vectorize_mask(mask: np.ndarray, transform, bbox: Dict = None) -> List[Polygon]:
+    - If open_then_close=True: opening (erode→dilate) first removes 1–2px tendrils,
+      then closing smooths ragged coasts.
+    - min_blob_pixels>0 drops tiny specks after morphology.
     """
-    Convert raster mask to vector polygons and keep coastal features.
-    Filters only obvious noise; keeps islands and the main ocean polygon.
-    """
-    polys = []
-    for geom, val in shapes(mask, mask=None, transform=transform):
-        if val != 1:
-            continue
-        g = shape(geom)
-        if g.area > 0:
-            polys.append(g)
+    mask_b = mask.astype(bool)
 
-    if not polys:
-        return []
-
-    merged = unary_union(polys)
-    if isinstance(merged, Polygon):
-        geoms = [merged]
-    elif isinstance(merged, MultiPolygon):
-        geoms = list(merged.geoms)
+    s = np.ones((kernel_size, kernel_size), dtype=bool)
+    if open_then_close:
+        mask_b = binary_opening(mask_b, structure=s)
+        mask_b = binary_closing(mask_b, structure=s)
     else:
+        mask_b = binary_closing(mask_b, structure=s)
+
+    if min_blob_pixels and min_blob_pixels > 0:
+        mask_b = remove_small_objects(mask_b, min_size=int(min_blob_pixels), connectivity=2)
+
+    return mask_b.astype(np.uint8)
+
+def vectorize_mask(mask: np.ndarray, transform, bbox=None):
+    """
+    Convert a binary water mask into polygon geometries
+    (list of shapely Polygons).
+
+    Supports optional artefact removal via a global flag:
+        _ARTIFACT_CLEANUP_FLAG = True
+    This is set in run_snapshot() / run_change_detection()
+    based on the user's UI selection.
+    """
+    import numpy as np
+    import rasterio.features
+    from shapely.geometry import shape, Polygon, MultiPolygon
+    from shapely.ops import unary_union
+
+    geoms = []
+
+    # -------------------------------
+    # 1) Raster → vector polygons
+    # -------------------------------
+    for geom, val in rasterio.features.shapes(
+        mask.astype(np.uint8),
+        mask=mask.astype(bool),
+        transform=transform
+    ):
+        if val == 1:
+            try:
+                g = shape(geom)
+                if g.is_valid and g.area > 0:
+                    geoms.append(g)
+            except Exception:
+                pass
+
+    if not geoms:
         return []
 
-    # Keep small shoreline bits (≈0.001 km² at mid-latitudes)
-    min_area = 1e-8
-    geoms = [p for p in geoms if p.area > min_area]
-
-    if bbox and len(geoms) > 1:
-        # Slight inset to decide "fully inside" vs edge-touching
-        boundary_box = box(
-            bbox['min_lon'] + 1e-6,
-            bbox['min_lat'] + 1e-6,
-            bbox['max_lon'] - 1e-6,
-            bbox['max_lat'] - 1e-6
+    # -------------------------------
+    # 2) AOI clipping (optional)
+    # -------------------------------
+    if bbox is not None:
+        from shapely.geometry import box
+        aoi = box(
+            bbox["min_lon"], bbox["min_lat"],
+            bbox["max_lon"], bbox["max_lat"]
         )
-        geoms_sorted = sorted(geoms, key=lambda g: g.area, reverse=True)
-        filtered = [geoms_sorted[0]]  # always keep the largest (ocean)
-        for g in geoms_sorted[1:]:
-            if boundary_box.contains(g):
-                filtered.append(g)
-            elif g.intersects(boundary_box):
-                if g.area > geoms_sorted[0].area * 0.01 or g.area > 1e-6:
-                    filtered.append(g)
-        return filtered
+        clipped = []
+        for g in geoms:
+            try:
+                inter = g.intersection(aoi)
+                if not inter.is_empty:
+                    if isinstance(inter, (Polygon, MultiPolygon)):
+                        if isinstance(inter, MultiPolygon):
+                            for p in inter.geoms:
+                                if p.area > 0:
+                                    clipped.append(p)
+                        else:
+                            clipped.append(inter)
+                # ignore empty intersections
+            except Exception:
+                pass
 
+        geoms = clipped
+
+    if not geoms:
+        return []
+
+    # ============================================================
+    # 3) OPTIONAL: Remove spikes / tendrils (user-selectable)
+    # ============================================================
+    artifact_cleanup = False
+    try:
+        artifact_cleanup = bool(globals().get("_ARTIFACT_CLEANUP_FLAG", False))
+    except Exception:
+        pass
+
+    if artifact_cleanup and bbox is not None:
+        from shapely.ops import unary_union
+
+        # Determine approximate lat for meter→degree conversion
+        mid_lat = (bbox["min_lat"] + bbox["max_lat"]) / 2.0
+
+        def m_to_deg(m):
+            lat_deg_per_m = 1.0 / 111_320.0
+            lon_deg_per_m = 1.0 / (111_320.0 * max(np.cos(np.radians(mid_lat)), 1e-6))
+            return m * max(lat_deg_per_m, lon_deg_per_m)
+
+        # 10–20 m is safe for Sentinel-2 10 m pixels; removes 1–2 px tendrils
+        buf_deg = m_to_deg(15.0)
+
+        cleaned = []
+        for g in geoms:
+            try:
+                g2 = g.buffer(buf_deg).buffer(-buf_deg)
+                if g2.is_valid and g2.area > 0:
+                    cleaned.append(g2)
+            except Exception:
+                cleaned.append(g)
+
+        geoms = cleaned
+
+    # -------------------------------
+    # 4) Return final polygons
+    # -------------------------------
     return geoms
+
 
 def _meters_to_degrees(meters: float, lat_deg: float) -> float:
     lat_deg_per_m = 1.0 / 111_320.0
@@ -501,6 +579,7 @@ class CoastalAnalyzer:
         smooth_tolerance   = self.params.get('smooth_tolerance', 2.0)
         consensus_votes    = self.params.get('consensus_votes', 2)
         external_cloud_mask = self.params.get('external_cloud_mask', None)
+        artifact_cleanup = bool(self.params.get('artifact_cleanup', False))
 
         # Optional reference grid (for change detection locking)
         ref_T = self.params.get('reference_transform')
@@ -579,16 +658,34 @@ class CoastalAnalyzer:
 
         # Morphological refinement
         if apply_morphology:
-            water_mask = refine_water_mask(water_mask, kernel_size=morph_kernel_size)
+            if artifact_cleanup:
+                water_mask = refine_water_mask(
+                    water_mask,
+                    kernel_size=morph_kernel_size,   # your current kernel (e.g., 3)
+                    min_blob_pixels=12,              # drop tiny specks
+                    open_then_close=True             # opening+closing removes tendrils
+                )
+            else:
+                water_mask = refine_water_mask(
+                    water_mask,
+                    kernel_size=morph_kernel_size,
+                    min_blob_pixels=0,
+                    open_then_close=False
+                )
 
         # Vectorize & shoreline
+        # Toggle spike shaving for vectorize_mask() without changing its signature
+        globals()['_ARTIFACT_CLEANUP_FLAG'] = artifact_cleanup  # <- NEW
+
         polys = vectorize_mask(water_mask, g_transform, bbox=self.bbox)
+
         shores = extract_all_shorelines(
             polys, bbox=self.bbox,
             smooth_tolerance_m=smooth_tolerance,
             clip_aoi_edge_within_m=30.0,
-            min_length_m=20.0
+            min_length_m=(50.0 if artifact_cleanup else 20.0)   # <- stricter when ON
         )
+
 
 
         # GeoJSON outputs
