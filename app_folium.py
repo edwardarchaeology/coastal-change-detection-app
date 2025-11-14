@@ -31,6 +31,24 @@ DEFAULT_ZOOM = 13
 app_ui = ui.page_navbar(
     ui.nav_panel("🌊 Coastal Monitor",
         ui.h2("Coastal Change Detection App", style="padding: 20px;"),
+        # Helpful disclaimer about backend timeouts / slow responses
+        ui.div(
+            ui.p(
+                "⚠️ If the backend (Microsoft Planetary Computer or data service) is slow to respond, try making your AOI smaller or reducing the number of scenes to process. Smaller AOIs and fewer scenes significantly reduce download and processing time.",
+                class_="mb-0"
+            ),
+            class_="alert alert-warning d-flex align-items-start mx-3",
+            style="padding: .6rem 1rem;"
+        ),
+        # Quick pointer to in-app help
+        ui.div(
+            ui.p(
+                "ℹ️ Need help? Use the Help tab (ℹ️) for usage tips, troubleshooting, and recommended settings.",
+                class_="mb-0"
+            ),
+            class_="alert alert-info d-flex align-items-start mx-3",
+            style="padding: .45rem 1rem; margin-top:6px;"
+        ),
         
         ui.navset_card_tab(
             ui.nav_panel("🗺️ Map",
@@ -196,76 +214,114 @@ app_ui = ui.page_navbar(
                 value="results_tab"  # ID for programmatic access
             ),
             
-            ui.nav_panel("ℹ️ Help",
-                ui.markdown("""
-                ## Quick Start Guide
-                
-                ### 1. Select Your Area
-                
-                **🎨 DRAW METHOD:**
-                1. Click the **rectangle tool** (⬜) in the top-left corner of the map
-                2. Click and drag on the map to draw your area
-                3. ⚠️ **IMPORTANT**: Click the green **"✓ Set Bounding Box"** button to confirm
-                4. Yellow box appears - now you're ready to analyze!
-                
-                **⌨️ MANUAL METHOD:**
-                1. Enter a location in the **Search box** (e.g., "Grand Isle, Louisiana")
-                2. Click **🔎 Search** - map centers on that location
-                3. Adjust the **coordinate values** in the right panel
-                4. Click **✓ Set Bounding Box** - yellow rectangle appears
-                
-                **Coordinate Tips:**
-                - Latitude: Positive = North, range typically 25-50° for USA
-                - Longitude: Negative = West, range typically -125 to -65° for USA  
-                - Keep area small: 0.02° × 0.03° ≈ 2km × 3km processes fastest
-                - The sidebar shows area size after you set the bounding box
+                        ui.nav_panel("ℹ️ Help",
+                            ui.markdown("""
+                            ## Quick Start & Notes (Updated)
 
-                
-                ### 2. Choose Dates
-                - **Snapshot mode**: Shows water/shoreline for selected period
-                - **Change mode**: Compares two time periods (historical offset)
-                
-                ### 3. Select Detection Method
-                - **Otsu**: Recommended! Auto-threshold works for most cases
-                - **Fixed**: Manual threshold (for experts)
-                - **Adaptive**: Best for varied water conditions
-                - **Multi-Index**: Most accurate for turbid/muddy water
-                
-                ### 4. Run Analysis
-                - Ensure your yellow bounding box is visible
-                - Click **▶️ RUN ANALYSIS** button
-                - Progress bar shows: searching → downloading → computing → vectorizing
-                - Takes 30-90 seconds typically
-                
-                ### 5. Explore Results
-                - Switch to **Results tab**
-                - **Layers render reliably with bright colors!**
-                - Use **layer control** (top-right icon) to toggle visibility
-                - Toggle checkboxes to show/hide specific layers
-                
-                ### Understanding Results
-                
-                **Snapshot Mode:**
-                - 🟡 **Yellow lines** = detected shoreline (thick, visible!)
-                - 💙 **Blue areas** = water bodies (semi-transparent)
-                
-                **Change Detection:**
-                - 🟢 **Bright Green** = Land gained (progradation)
-                - 🔴 **Bright Red** = Land lost (retreat/erosion)
-                - 🔵 **Cyan** (solid line) = Current shoreline
-                - 🟣 **Magenta** (dashed line) = Past shoreline
-                - 💙 **Blue** = Current water (optional layer)
-                - 🩷 **Pink** = Past water (optional layer)
-                
-                ### Pro Tips
-                - Start with Otsu + 20% cloud max
-                - Use 6-12 month gaps for change detection
-                - Smaller areas = faster processing
-                - Sentinel-2 resolution = 10m/pixel (minimum detectable ~20-30m)
-                - Save good coordinate sets for reuse
-                - Yellow box must be visible before running analysis!
-                """),
-            ),
+                            This help panel reflects the current app UI and behavior. Drawing is the primary way to select an AOI: manual coordinates are available as a secondary option in the sidebar.
+
+                            ### 1: Select Your Area (primary: Draw)
+
+                            - Click the rectangle draw tool in the map toolbar (top-left) and drag to draw your AOI.
+
+                            - After drawing, click **✓ Set from Drawing** in the right panel to confirm the AOI. A yellow rectangle shows the selected AOI.
+
+                            - If you need to try again, use **Clear Drawing 🗑️** to clear the drawn coordinates, or **Clear Bounding Box** to clear the AOI entirely.
+
+                            - The map will preserve the current pan/zoom while you clear or set AOIs (it will not reset to the default view unless you reload the app).
+
+                            ### 2: Manual Entry (secondary)
+
+                            - Manual coordinate fields are available under **Manual Entry (click to expand)** in the right sidebar.
+
+                            - Enter Min/Max Latitude and Longitude, then click **✓ Set Bounding Box** to apply. This is useful only when drawing is not convenient.
+
+                            ### 3: Dates & Analysis Modes
+
+                            - Snapshot mode: analyze a single date range and show water/shoreline for that period.
+
+                            - Change mode: compares a current period to a historical offset (use the "Historical offset (days)" slider).
+
+                            ### 4: Detection Methods (what to pick)
+
+                            - **Otsu (auto)**: recommended starting point for most AOIs.
+
+                            - **Fixed**: expert/manual threshold control.
+
+                            - **Adaptive**: local thresholding, useful for heterogeneous scenes.
+
+                            - **Multi-Index**: consensus across indices, most robust in turbid/coastal waters.
+
+                            ### 5: Run Analysis
+
+                            - Confirm your yellow AOI is visible then click **▶️ Run Analysis**.
+
+                            - Progress bar indicates searching → downloading → processing → vectorizing.
+
+                            - Typical runtime depends on AOI size and number of scenes: smaller AOIs and fewer scenes are much faster.
+
+                            ### 6: Results & Layers
+
+                            - Switch to the **Results** tab to see the outputs (shorelines, water masks, change polygons).
+
+                            - Use the layer control (top-right) to toggle layers.
+
+                            - Color legend (in UI and docs) maps each layer to an interpretable color: colors were tuned for visibility and reduced eye-strain.
+
+                            ### Troubleshooting & Performance
+
+                            - If the backend (Microsoft Planetary Computer or data service) is slow, try a smaller AOI or reduce **Max scenes to process**.
+
+                            - If detection looks noisy, enable **Refine** (morphology) and/or increase smoothing tolerance.
+
+                            ### Quick Tips
+
+                            - Start with **Otsu** + **cloud_max 20%** and **max_scenes 6–10**.
+
+                            - For highly turbid water, try **Multi-Index** with consensus=2.
+
+                            - Use small AOIs for quick iteration; increase AOI and scene count for final runs.
+
+                            """),
+                                # Compact emoji legend (re-ordered groups per user request)
+                                ui.HTML('''
+                                        <div style="margin-top:12px;">
+                                            <h5>Legend</h5>
+                                            <div style="display:flex;flex-direction:column;gap:10px;">
+                                                <!-- Water: current / past -->
+                                                <div style="display:flex;flex-direction:row;gap:12px;align-items:center;">
+                                                    <div style="display:flex;flex-direction:column;">
+                                                        <div style="display:flex;align-items:center;gap:8px;"><span style="font-size:18px;line-height:1;">💙</span><strong style="margin-left:6px;">Current water</strong></div>
+                                                        <div style="display:flex;align-items:center;gap:8px;"><span style="font-size:18px;line-height:1;">🩷</span><strong style="margin-left:6px;">Past water</strong></div>
+                                                    </div>
+                                                    <div style="margin-left:14px;color:#666;">&mdash; detected water polygons for each period</div>
+                                                </div>
+
+                                                <!-- Shorelines: current / past -->
+                                                <div style="display:flex;flex-direction:row;gap:12px;align-items:center;">
+                                                    <div style="display:flex;flex-direction:column;">
+                                                        <div style="display:flex;align-items:center;gap:8px;"><span style="font-size:18px;line-height:1;">🔵</span><strong style="margin-left:6px;">Current shoreline</strong></div>
+                                                        <div style="display:flex;align-items:center;gap:8px;"><span style="font-size:18px;line-height:1;">🟣</span><strong style="margin-left:6px;">Past shoreline</strong></div>
+                                                    </div>
+                                                    <div style="margin-left:14px;color:#666;">&mdash; solid = current, dashed = historical</div>
+                                                </div>
+
+                                                <!-- Change polygons: gained / lost -->
+                                                <div style="display:flex;flex-direction:row;gap:12px;align-items:center;">
+                                                    <div style="display:flex;flex-direction:column;">
+                                                        <div style="display:flex;align-items:center;gap:8px;"><span style="font-size:18px;line-height:1;">🟢</span><strong style="margin-left:6px;">Land gained (progradation)</strong></div>
+                                                        <div style="display:flex;align-items:center;gap:8px;"><span style="font-size:18px;line-height:1;">🔴</span><strong style="margin-left:6px;">Land lost (retreat)</strong></div>
+                                                    </div>
+                                                    <div style="margin-left:14px;color:#666;">&mdash; polygons showing net change between periods</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                '''),
+                                ui.markdown("""
+                                ### Where to get help
+                                - See `QUICK_START.md` and `README.md` for full docs and deployment notes.
+                                """),
+                        ),
         ),
     ),
     

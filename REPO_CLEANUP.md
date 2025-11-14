@@ -107,6 +107,28 @@ docker run -p 8000:8000 coastal-app
 uv run shiny run app_folium.py --host 127.0.0.1 --port 8000
 ```
 
+## 🧹 Cleanup helper (automated)
+
+If you'd like to move the `archive/` folder out of the main tree and prepare a cleanup branch, run the helper PowerShell script included at `tools\archive_snapshot_and_remove.ps1`.
+
+Steps (PowerShell, run in repo root):
+
+```powershell
+# Create a timestamped zip snapshot one folder above the repo, create branch, and remove archive/
+.\tools\archive_snapshot_and_remove.ps1
+
+# Inspect the created snapshot (it will be at ..\archive_snapshot_YYYYMMDD_HHMM.zip)
+# Then push the branch if everything looks good:
+git push -u origin repo-cleanup
+```
+
+The script will:
+- Create a snapshot `archive_snapshot_*.zip` in the parent folder of the repo
+- Create a new git branch `repo-cleanup`
+- Remove `archive/` from the branch and commit the change
+
+Review the zip before pushing the branch from your machine.
+
 ## 🎉 Repository is Ready
 
 The repository is now:
